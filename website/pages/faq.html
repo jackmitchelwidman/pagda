@@ -1,0 +1,85 @@
+<!-- title: Pagda FAQ | desc: What Pagda is, what it guarantees, what it leaves out, and answers to the errors people hit first. -->
+<h1>Questions and answers</h1>
+<p class="intro">What Pagda is, what it promises, and what to do about the errors people hit first.</p>
+
+<h2 id="about">About Pagda</h2>
+<dl class="faq">
+  <div><dt>What is Pagda?</dt>
+  <dd><p>Pagda is Python with dependent types. The <code>pagda</code> program is a Python 3 interpreter written in C. A file that imports <code>dependent</code> is translated to Agda and checked by the <code>agda</code> program before it runs.</p></dd></div>
+
+  <div><dt>What is a dependent type?</dt>
+  <dd><p>A type that mentions a value. "A list of ints" is an ordinary type. "A list of exactly <code>n</code> ints" is a dependent type, and so is "a proof that <code>i</code> is less than <code>len(xs)</code>".</p></dd></div>
+
+  <div><dt>Do I need to know Agda?</dt>
+  <dd><p>No, to write programs. You write Python. Type errors come from Agda, and they use Agda's spelling for types, so the <a href="reference.html#reading-the-error-messages">table of spellings</a> is worth a look. Writing proofs is easier if you have met a proof assistant before, and <a href="proofs.html">Proofs</a> starts from the beginning.</p></dd></div>
+
+  <div><dt>How does the name come about?</dt>
+  <dd><p>Python and Agda.</p></dd></div>
+</dl>
+
+<h2 id="is-it-python">Is it Python?</h2>
+<dl class="faq">
+  <div><dt>Which Python programs does <code>pagda</code> run?</dt>
+  <dd><p>Ordinary files run on Pagda's own interpreter. It handles functions with every kind of parameter, closures, decorators, classes with multiple inheritance, generators, comprehensions, exceptions, <code>with</code>, <code>match</code>, f-strings, and imports of <code>.py</code> files and packages.</p>
+  <p>Its standard library is small: <code>math</code>, <code>sys</code>, <code>time</code>, <code>random</code>, <code>os</code> (part), <code>json</code>, <code>collections</code>, <code>functools</code>, <code>itertools</code>, <code>dataclasses</code>, <code>typing</code>, <code>heapq</code>, <code>bisect</code>, <code>operator</code>, <code>string</code>, <code>copy</code>, <code>abc</code>.</p>
+  <p>Missing: <code>bytes</code>, complex numbers, <code>async</code>, metaclasses, and modules such as <code>re</code>, <code>enum</code>, <code>datetime</code> and <code>pathlib</code>.</p></dd></div>
+
+  <div><dt>Is a checked file still a Python file?</dt>
+  <dd><p>Yes. It runs under <code>python3</code> 3.12 or newer with <code>dependent.py</code> beside it and prints the same output. There the types are not checked.</p></dd></div>
+
+  <div><dt>What can a checked file not hold?</dt>
+  <dd><p>Floats, sets, exceptions, <code>with</code> blocks, file access, assigning to a field of an object, and inheritance between classes. The <a href="reference.html#missing-from-checked-files">reference has the full list</a>. Code that needs these goes in an ordinary Python file, or behind a <code>@trusted</code> def.</p></dd></div>
+
+  <div><dt>Can checked and ordinary files work together?</dt>
+  <dd><p>Yes. An ordinary file can import a checked file and call its defs. A checked file reaches ordinary Python through defs marked <code>@trusted</code>, and can import other checked files.</p></dd></div>
+</dl>
+
+<h2 id="guarantees">What the check guarantees</h2>
+<dl class="faq">
+  <div><dt>What does an accepted file promise?</dt>
+  <dd><p>When a checked file is accepted and run as the main program: every call gets arguments of the annotated types, every <code>match</code> finds a case, every loop and recursion ends, no index, key, <code>pop</code>, division or subtraction fails, no <code>None</code> is used as a value, and every <code>assert</code> holds.</p></dd></div>
+
+  <div><dt>Where does the promise stop?</dt>
+  <dd><ul>
+    <li>An ordinary Python file can call a checked def with any arguments. Annotations are not checked while the program runs.</li>
+    <li>A <code>@trusted</code> def is believed. It promises its result type, the same result for the same arguments, and that it leaves its arguments unchanged.</li>
+    <li>Very deep recursion still stops at Python's limit of 1000 nested calls.</li>
+    <li>The promise rests on Pagda's translation giving each construct the same meaning the interpreter does. The tests compare the two on edge values.</li>
+  </ul></dd></div>
+
+  <div><dt>Do the types slow the program down?</dt>
+  <dd><p>No. Checking happens before the program starts, and the result is remembered until the file changes. The program that runs is the Python you wrote.</p></dd></div>
+</dl>
+
+<h2 id="common-errors">Errors people hit first</h2>
+<dl class="faq">
+  <div><dt>"The checker cannot see that a condition this line relies on holds"</dt>
+  <dd><p>The line reads <code>xs[i]</code>, divides, pops, or subtracts <code>Nat</code>s, and nothing nearby shows it is safe. Put it under a test: <code>if i &lt; len(xs):</code>, <code>if xs:</code>, <code>if b != 0:</code>, <code>if k in d:</code>.</p></dd></div>
+
+  <div><dt>"'xs' may be shared here"</dt>
+  <dd><p>The code changes a list or dict in place, and something else might hold the same object: it is a parameter, or it came from a call, or it was given a second name. Make a copy the function owns: <code>xs = list(xs)</code>.</p></dd></div>
+
+  <div><dt>"this value may be None"</dt>
+  <dd><p>A value of type <code>Optional[T]</code> is being used as a <code>T</code>. Test it first: <code>if x is None: ...</code>. After the test the name holds a plain value.</p></dd></div>
+
+  <div><dt>"the checker has to see that a while loop ends"</dt>
+  <dd><p>The loop is not one of the two shapes the checker handles by itself. Rewrite it as a <code>for</code> loop if you can. Otherwise end it with <code>decreases(measure, proof)</code>; <a href="proofs.html#while-loops">Proofs</a> shows how.</p></dd></div>
+
+  <div><dt><code>Int !=&lt; Nat</code>, or <code>Nat != Int</code></dt>
+  <dd><p>An <code>int</code> is being used where a <code>Nat</code> is wanted, or a number written out was taken as a <code>Nat</code> where an <code>int</code> is needed. Annotate the name (<code>x: int = 0</code>), or convert with <code>to_nat(x)</code> or <code>abs(x)</code>.</p></dd></div>
+
+  <div><dt>"Agda could not work out a type here"</dt>
+  <dd><p>Usually an empty list or a <code>None</code> with nothing to say what it holds. Add an annotation: <code>out: list[int] = []</code>.</p></dd></div>
+</dl>
+
+<h2 id="project">The project</h2>
+<dl class="faq">
+  <div><dt>How mature is Pagda?</dt>
+  <dd><p>It is new. There are no numbered releases, and it is built from source. Its test suite runs every example on this site, compares Pagda with <code>python3</code>, and holds a set of programs that must be refused.</p></dd></div>
+
+  <div><dt>How is it built?</dt>
+  <dd><p>Pagda is about 17,000 lines of C. Most of it is the interpreter: a parser, a bytecode compiler, a stack machine, and a garbage collector. The translator to Agda is one C file of about 5,000 lines. The Agda definitions that checked files are translated against are in a single Agda module that ships inside the program.</p></dd></div>
+
+  <div><dt>Which Agda does it need?</dt>
+  <dd><p>Agda 2.8.0. Pagda calls the <code>agda</code> program and uses none of Agda's libraries.</p></dd></div>
+</dl>

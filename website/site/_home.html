@@ -1,0 +1,350 @@
+<title>Pagda</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Pagda is Python with dependent types. A checked file is type-checked by Agda before it runs.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="site.css">
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><span class="mark" aria-hidden="true">⊢</span>Pagda</a>
+<nav class="nav" aria-label="Site"><a href="index.html" aria-current="page">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></header>
+<main class="home"><section class="hero"><div class="wrap">
+  <div class="hero-text">
+    <div class="eyebrow">Python with dependent types</div>
+    <h1>Python that is checked before it runs.</h1>
+    <p class="lede">Pagda runs Python. A file that asks for it is first type-checked by Agda, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero.</p>
+    <div class="actions">
+      <a class="btn primary" href="start.html">Get started</a>
+      <a class="btn" href="tour.html">Take the tour</a>
+    </div>
+  </div>
+  <div class="hero-code">
+    <figure class="sample is-ok">
+<figcaption><span class="file">hero.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def mean(xs: list[int]) -&gt; int:
+    if xs:                            # the test is the proof
+        return sum(xs) // len(xs)     # so this cannot divide by zero
+    return 0
+
+
+class Vec[A, n: Nat](Data): ...       # a list whose length is in its type
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+# n + 1 is never 0, so this takes only a non-empty Vec
+def first[A, n: Nat](xs: Vec[A, n + 1]) -&gt; A:
+    match xs:
+        case Cons(x, _):
+            return x
+
+
+assert mean([3, 4, 8]) == 5           # checked before the program runs
+print(mean([3, 4, 8]), first(Cons(&quot;a&quot;, Nil())))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">mean</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> xs:                            <span class="c"># the test is the proof</span>
+        <span class="k">return</span> sum(xs) // len(xs)     <span class="c"># so this cannot divide by zero</span>
+    <span class="k">return</span> <span class="n">0</span>
+
+
+<span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...       <span class="c"># a list whose length is in its type</span>
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="c"># n + 1 is never 0, so this takes only a non-empty Vec</span>
+<span class="k">def</span> <span class="f">first</span>[A, n: <span class="t">Nat</span>](xs: <span class="t">Vec</span>[A, n + <span class="n">1</span>]) -&gt; A:
+    <span class="k">match</span> xs:
+        <span class="k">case</span> Cons(x, _):
+            <span class="k">return</span> x
+
+
+<span class="k">assert</span> mean([<span class="n">3</span>, <span class="n">4</span>, <span class="n">8</span>]) == <span class="n">5</span>           <span class="c"># checked before the program runs</span>
+print(mean([<span class="n">3</span>, <span class="n">4</span>, <span class="n">8</span>]), first(Cons(<span class="s">&quot;a&quot;</span>, Nil())))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda hero.py</div><pre>5 a</pre></div>
+</figure>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>What the checker catches</h2>
+    <p>Each program on the right was run through <code>pagda</code> to build this page. The panel under the code is what it printed.</p>
+  </div>
+  <div class="pairs">
+    <div class="pair">
+      <div class="pair-text">
+        <h3>An index past the end</h3>
+        <p><code>xs[i]</code> needs a reason that <code>i</code> is inside the list. A test in the code is a reason. Without one, the file is refused and nothing runs.</p>
+      </div>
+      <div class="pair-code"><figure class="sample is-ok">
+<figcaption><span class="file">f_index.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def get(xs: list[int], i: Nat) -&gt; int:
+    if i &lt; len(xs):
+        return xs[i]
+    return 0
+
+
+print(get([4, 8, 15], 1), get([4, 8, 15], 7))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">get</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> i &lt; len(xs):
+        <span class="k">return</span> xs[i]
+    <span class="k">return</span> <span class="n">0</span>
+
+
+print(get([<span class="n">4</span>, <span class="n">8</span>, <span class="n">15</span>], <span class="n">1</span>), get([<span class="n">4</span>, <span class="n">8</span>, <span class="n">15</span>], <span class="n">7</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda f_index.py</div><pre>8 0</pre></div>
+</figure><figure class="sample is-bad">
+<figcaption><span class="file">f_index_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def get(xs: list[int], i: Nat) -&gt; int:
+    return xs[i]
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">get</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> xs[i]
+</code></pre>
+<div class="result"><div class="cmd">$ pagda f_index_bad.py</div><pre>  File &quot;f_index_bad.py&quot;, line 6
+    return xs[i]
+TypeCheckError: (i &lt; len xs) != true of type Bool
+when checking that the expression refl has type (i &lt; len xs) ≡ true
+The checker cannot see that a condition this line relies on holds. xs[i] needs i &lt; len(xs), d[k] needs k in d, // and % need a divisor that is not 0, a - b on Nats needs b &lt;= a, and an assert inside a function needs its condition. known(c) gives the proof inside &#x27;if c:&#x27; or &#x27;while c:&#x27;, with c written the same way. Put the code under an &#x27;if&#x27; that tests it.</pre></div>
+</figure></div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A None used as a value</h3>
+        <p>A function that may return <code>None</code> says so in its type. The caller has to test for it, and after the test the name holds a plain value.</p>
+      </div>
+      <div class="pair-code"><figure class="sample is-ok">
+<figcaption><span class="file">f_none.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def find(names: list[str], prefix: str) -&gt; Optional[str]:
+    for name in names:
+        if name.startswith(prefix):
+            return name
+    return None
+
+
+def shout(names: list[str], prefix: str) -&gt; str:
+    hit = find(names, prefix)
+    if hit is None:
+        return &quot;nobody&quot;
+    return hit + &quot;!&quot;
+
+
+print(shout([&quot;ada&quot;, &quot;bob&quot;], &quot;b&quot;), shout([&quot;ada&quot;], &quot;z&quot;))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">find</span>(names: <span class="t">list</span>[<span class="t">str</span>], prefix: <span class="t">str</span>) -&gt; <span class="t">Optional</span>[<span class="t">str</span>]:
+    <span class="k">for</span> name <span class="k">in</span> names:
+        <span class="k">if</span> name.startswith(prefix):
+            <span class="k">return</span> name
+    <span class="k">return</span> <span class="k">None</span>
+
+
+<span class="k">def</span> <span class="f">shout</span>(names: <span class="t">list</span>[<span class="t">str</span>], prefix: <span class="t">str</span>) -&gt; <span class="t">str</span>:
+    hit = find(names, prefix)
+    <span class="k">if</span> hit <span class="k">is</span> <span class="k">None</span>:
+        <span class="k">return</span> <span class="s">&quot;nobody&quot;</span>
+    <span class="k">return</span> hit + <span class="s">&quot;!&quot;</span>
+
+
+print(shout([<span class="s">&quot;ada&quot;</span>, <span class="s">&quot;bob&quot;</span>], <span class="s">&quot;b&quot;</span>), shout([<span class="s">&quot;ada&quot;</span>], <span class="s">&quot;z&quot;</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda f_none.py</div><pre>bob! nobody</pre></div>
+</figure><figure class="sample is-bad">
+<figcaption><span class="file">f_none_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def find(names: list[str], prefix: str) -&gt; Optional[str]:
+    for name in names:
+        if name.startswith(prefix):
+            return name
+    return None
+
+
+def shout(names: list[str], prefix: str) -&gt; str:
+    return find(names, prefix) + &quot;!&quot;
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">find</span>(names: <span class="t">list</span>[<span class="t">str</span>], prefix: <span class="t">str</span>) -&gt; <span class="t">Optional</span>[<span class="t">str</span>]:
+    <span class="k">for</span> name <span class="k">in</span> names:
+        <span class="k">if</span> name.startswith(prefix):
+            <span class="k">return</span> name
+    <span class="k">return</span> <span class="k">None</span>
+
+
+<span class="k">def</span> <span class="f">shout</span>(names: <span class="t">list</span>[<span class="t">str</span>], prefix: <span class="t">str</span>) -&gt; <span class="t">str</span>:
+    <span class="k">return</span> find(names, prefix) + <span class="s">&quot;!&quot;</span>
+</code></pre>
+<div class="result"><div class="cmd">$ pagda f_none_bad.py</div><pre>  File &quot;f_none_bad.py&quot;, line 13
+    return find(names, prefix) + &quot;!&quot;
+TypeCheckError: this value may be None, and a value that is never None is needed here. Test it first with &#x27;if ... is None:&#x27; or &#x27;if ... is not None:&#x27;.</pre></div>
+</figure></div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A value of the wrong shape</h3>
+        <p>A type can mention a value. <code>Vec[A, n + 1]</code> is a list that has at least one item, so <code>first</code> cannot be called on an empty one.</p>
+      </div>
+      <div class="pair-code"><figure class="sample is-bad">
+<figcaption><span class="file">hero_refused.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+def first[A, n: Nat](xs: Vec[A, n + 1]) -&gt; A:
+    match xs:
+        case Cons(x, _):
+            return x
+
+
+print(first(Nil()))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">first</span>[A, n: <span class="t">Nat</span>](xs: <span class="t">Vec</span>[A, n + <span class="n">1</span>]) -&gt; A:
+    <span class="k">match</span> xs:
+        <span class="k">case</span> Cons(x, _):
+            <span class="k">return</span> x
+
+
+print(first(Nil()))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda hero_refused.py</div><pre>  File &quot;hero_refused.py&quot;, line 22
+    print(first(Nil()))
+TypeCheckError: zero != (suc _n_15) of type Nat
+when checking that the expression Nil has type
+Vec _A_14 (suc _n_15)</pre></div>
+</figure></div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A claim that is false</h3>
+        <p>A return type can be a statement, and the function body is its proof. This one says that <code>n + 0</code> equals <code>n</code> for every <code>n</code>.</p>
+      </div>
+      <div class="pair-code"><figure class="sample is-ok">
+<figcaption><span class="file">f_proof.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def plus_zero(n: Nat) -&gt; n + 0 == n:
+    if n == 0:
+        return refl()
+    return cong(suc, plus_zero(n - 1))
+
+
+print(plus_zero(5))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">plus_zero</span>(n: <span class="t">Nat</span>) -&gt; n + <span class="n">0</span> == n:
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> refl()
+    <span class="k">return</span> cong(suc, plus_zero(n - <span class="n">1</span>))
+
+
+print(plus_zero(<span class="n">5</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda f_proof.py</div><pre>Refl()</pre></div>
+</figure></div>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>How it works</h2>
+    <p>A file opts in by importing <code>dependent</code>. Every other file runs as ordinary Python.</p>
+  </div>
+  <ol class="steps">
+    <li><strong>You write Python</strong><span>Classes, loops, lists, dicts, f-strings, with type annotations on every def.</span></li>
+    <li><strong>Pagda translates it</strong><span>The file becomes an Agda program that means the same thing.</span></li>
+    <li><strong>Agda checks it</strong><span>An error is reported against the Python line it came from.</span></li>
+    <li><strong>The Python runs</strong><span>The types have done their work, so they cost nothing while the program runs.</span></li>
+  </ol>
+</div></section>
+
+<section><div class="wrap">
+  <div class="cols">
+    <div>
+      <h2>What an accepted file promises</h2>
+      <ul>
+        <li>Every call gets arguments of the annotated types.</li>
+        <li>No index, key, <code>pop</code> or division fails.</li>
+        <li>No <code>None</code> is used as a value.</li>
+        <li>Every <code>match</code> finds a case.</li>
+        <li>Every loop and recursion ends.</li>
+        <li>Every <code>assert</code> holds.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Where the promise stops</h2>
+      <ul>
+        <li>An ordinary Python file can call a checked file with anything.</li>
+        <li>A def marked <code>@trusted</code> is believed without being read.</li>
+        <li>Floats, sets, exceptions and file access are outside checked files.</li>
+        <li>Pagda is new. There are no numbered releases yet.</li>
+      </ul>
+      <p style="margin-top:1rem"><a href="faq.html">Read the limits in full</a></p>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>Try it</h2>
+    <p>Pagda is built from source with a C compiler and <code>make</code>. Checking needs Agda 2.8.0.</p>
+  </div>
+  <pre class="code plain"><code>make                      # builds ./pagda
+./pagda hello.py          # check, then run
+./pagda --check hello.py  # check only</code></pre>
+  <p style="margin-top:1.2rem"><a class="btn primary" href="start.html">Get started</a></p>
+</div></section>
+</main>
+<footer class="foot"><div class="wrap">
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<nav aria-label="Footer"><a href="index.html" aria-current="page">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></footer>
+<script src="site.js"></script>

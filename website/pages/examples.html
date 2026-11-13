@@ -1,0 +1,25 @@
+<!-- title: Pagda examples | desc: Complete Pagda programs with their real output. -->
+<h1>Examples</h1>
+<p class="intro">Complete programs. Each was checked and run to build this page. They are also part of Pagda's test suite.</p>
+
+<h2 id="a-report">A report from a list of records</h2>
+<p>Ordinary Python: a class, lists, a dict, f-strings, a value that may be <code>None</code>, and a <code>main</code>. Nothing here is a proof. The checker still guarantees that <code>mean</code> never divides by zero and that <code>hist[g]</code> never misses.</p>
+{{run:ex_grades}}
+
+<h2 id="an-array-of-ten">An array of exactly ten items</h2>
+<p>A class can carry a proof about its own fields. <code>size</code> is a proof that <code>items</code> has ten items, so an <code>Array10</code> with any other length cannot be built.</p>
+{{run:ex_array10}}
+<p><code>get</code> asks its caller for a proof that the index is below 10. The <code>inside</code> line joins that with the <code>size</code> proof to show the index is inside the list. A list of the wrong length is refused:</p>
+{{refuse:ex_array10_bad}}
+
+<h2 id="text-and-searching">Text, searching and loops</h2>
+<p>String handling, a dict of counts, a binary search and several <code>while</code> loops. The last def is a proof, imported from <code>lemmas</code>, that joining two lists adds their lengths.</p>
+{{run:ex_words}}
+
+<h2 id="vectors">Vectors with their length in the type</h2>
+<p>A dot product that only accepts two vectors of the same length.</p>
+{{run:t07_vec}}
+
+<h2 id="safe-lookup">A lookup that cannot go out of range</h2>
+<p><code>Fin[n]</code> is a number below <code>n</code>. Indexing a <code>Vec[A, n]</code> with a <code>Fin[n]</code> needs no test and no proof at the call.</p>
+{{run:p_unreachable}}

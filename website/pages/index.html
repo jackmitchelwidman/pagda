@@ -1,0 +1,102 @@
+<!-- title: Pagda | desc: Pagda is Python with dependent types. A checked file is type-checked by Agda before it runs. -->
+<section class="hero"><div class="wrap">
+  <div class="hero-text">
+    <div class="eyebrow">Python with dependent types</div>
+    <h1>Python that is checked before it runs.</h1>
+    <p class="lede">Pagda runs Python. A file that asks for it is first type-checked by Agda, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero.</p>
+    <div class="actions">
+      <a class="btn primary" href="start.html">Get started</a>
+      <a class="btn" href="tour.html">Take the tour</a>
+    </div>
+  </div>
+  <div class="hero-code">
+    {{run:hero}}
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>What the checker catches</h2>
+    <p>Each program on the right was run through <code>pagda</code> to build this page. The panel under the code is what it printed.</p>
+  </div>
+  <div class="pairs">
+    <div class="pair">
+      <div class="pair-text">
+        <h3>An index past the end</h3>
+        <p><code>xs[i]</code> needs a reason that <code>i</code> is inside the list. A test in the code is a reason. Without one, the file is refused and nothing runs.</p>
+      </div>
+      <div class="pair-code">{{run:f_index}}{{refuse:f_index_bad}}</div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A None used as a value</h3>
+        <p>A function that may return <code>None</code> says so in its type. The caller has to test for it, and after the test the name holds a plain value.</p>
+      </div>
+      <div class="pair-code">{{run:f_none}}{{refuse:f_none_bad}}</div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A value of the wrong shape</h3>
+        <p>A type can mention a value. <code>Vec[A, n + 1]</code> is a list that has at least one item, so <code>first</code> cannot be called on an empty one.</p>
+      </div>
+      <div class="pair-code">{{refuse:hero_refused}}</div>
+    </div>
+    <div class="pair">
+      <div class="pair-text">
+        <h3>A claim that is false</h3>
+        <p>A return type can be a statement, and the function body is its proof. This one says that <code>n + 0</code> equals <code>n</code> for every <code>n</code>.</p>
+      </div>
+      <div class="pair-code">{{run:f_proof}}</div>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>How it works</h2>
+    <p>A file opts in by importing <code>dependent</code>. Every other file runs as ordinary Python.</p>
+  </div>
+  <ol class="steps">
+    <li><strong>You write Python</strong><span>Classes, loops, lists, dicts, f-strings, with type annotations on every def.</span></li>
+    <li><strong>Pagda translates it</strong><span>The file becomes an Agda program that means the same thing.</span></li>
+    <li><strong>Agda checks it</strong><span>An error is reported against the Python line it came from.</span></li>
+    <li><strong>The Python runs</strong><span>The types have done their work, so they cost nothing while the program runs.</span></li>
+  </ol>
+</div></section>
+
+<section><div class="wrap">
+  <div class="cols">
+    <div>
+      <h2>What an accepted file promises</h2>
+      <ul>
+        <li>Every call gets arguments of the annotated types.</li>
+        <li>No index, key, <code>pop</code> or division fails.</li>
+        <li>No <code>None</code> is used as a value.</li>
+        <li>Every <code>match</code> finds a case.</li>
+        <li>Every loop and recursion ends.</li>
+        <li>Every <code>assert</code> holds.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Where the promise stops</h2>
+      <ul>
+        <li>An ordinary Python file can call a checked file with anything.</li>
+        <li>A def marked <code>@trusted</code> is believed without being read.</li>
+        <li>Floats, sets, exceptions and file access are outside checked files.</li>
+        <li>Pagda is new. There are no numbered releases yet.</li>
+      </ul>
+      <p style="margin-top:1rem"><a href="faq.html">Read the limits in full</a></p>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="section-head">
+    <h2>Try it</h2>
+    <p>Pagda is built from source with a C compiler and <code>make</code>. Checking needs Agda 2.8.0.</p>
+  </div>
+  <pre class="code plain"><code>make                      # builds ./pagda
+./pagda hello.py          # check, then run
+./pagda --check hello.py  # check only</code></pre>
+  <p style="margin-top:1.2rem"><a class="btn primary" href="start.html">Get started</a></p>
+</div></section>

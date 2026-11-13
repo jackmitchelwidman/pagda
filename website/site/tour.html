@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A tour of Pagda</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="The Pagda language one idea at a time, from an ordinary program to types that mention values.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><span class="mark" aria-hidden="true">⊢</span>Pagda</a>
+<nav class="nav" aria-label="Site"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html" aria-current="page">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></header>
+<main class="doc"><nav class="toc" aria-label="On this page"><div class="toc-title">On this page</div><a href="#an-ordinary-program">An ordinary program</a><a href="#things-that-can-fail">Things that can fail</a><a href="#none">None</a><a href="#changing-a-list">Changing a list</a><a href="#loops">Loops</a><a href="#values-in-types">Values in types</a><a href="#proofs">Proofs</a><a href="#asking-for-a-reason">Asking the caller for a reason</a><a href="#holes">Holes</a><a href="#the-outside-world">The outside world</a><a href="#where-next">Where next</a></nav><div class="content"><h1>A tour of Pagda</h1>
+<p class="intro">Ten short programs. Each was run to build this page, and the panel under it shows what <code>pagda</code> printed. Every file starts with the two lines from <a href="start.html#first-checked-file">Get started</a>; the Copy button includes them.</p>
+
+<h2 id="an-ordinary-program">An ordinary program</h2>
+<p>A checked file looks like typed Python. Every def says what it takes and what it gives back. A class with fields is a <code>@dataclass</code>.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t01_hello.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+@dataclass
+class Item:
+    name: str
+    price: int
+    count: Nat
+
+
+def total(items: list[Item]) -&gt; int:
+    t = 0
+    for item in items:
+        t += item.price * item.count
+    return t
+
+
+def main() -&gt; None:
+    stock = [Item(&quot;pen&quot;, 3, 10), Item(&quot;ink&quot;, 12, 2)]
+    for item in stock:
+        print(f&quot;{item.name}: {item.price} x {item.count}&quot;)
+    print(&quot;total&quot;, total(stock))
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+">Copy</button></figcaption>
+<pre class="code"><code><span class="d">@dataclass</span>
+<span class="k">class</span> <span class="f">Item</span>:
+    name: <span class="t">str</span>
+    price: <span class="t">int</span>
+    count: <span class="t">Nat</span>
+
+
+<span class="k">def</span> <span class="f">total</span>(items: <span class="t">list</span>[Item]) -&gt; <span class="t">int</span>:
+    t = <span class="n">0</span>
+    <span class="k">for</span> item <span class="k">in</span> items:
+        t += item.price * item.count
+    <span class="k">return</span> t
+
+
+<span class="k">def</span> <span class="f">main</span>() -&gt; <span class="k">None</span>:
+    stock = [Item(<span class="s">&quot;pen&quot;</span>, <span class="n">3</span>, <span class="n">10</span>), Item(<span class="s">&quot;ink&quot;</span>, <span class="n">12</span>, <span class="n">2</span>)]
+    <span class="k">for</span> item <span class="k">in</span> stock:
+        print(<span class="s">f&quot;{item.name}: {item.price} x {item.count}&quot;</span>)
+    print(<span class="s">&quot;total&quot;</span>, total(stock))
+
+
+<span class="k">if</span> __name__ == <span class="s">&quot;__main__&quot;</span>:
+    main()
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t01_hello.py</div><pre>pen: 3 x 10
+ink: 12 x 2
+total 54</pre></div>
+</figure>
+<p>Two number types appear here. <code>int</code> is any whole number. <code>Nat</code> is 0, 1, 2 and up, the type of counts and positions. A <code>Nat</code> is accepted wherever an <code>int</code> is wanted.</p>
+
+<h2 id="things-that-can-fail">Things that can fail</h2>
+<p>Reading <code>xs[i]</code> fails when <code>i</code> is past the end. Dividing fails when the divisor is 0. In a checked file each of these needs a reason it is fine, and the usual reason is a test you would write anyway.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t03_bounds.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def at_or(xs: list[int], i: Nat, default: int) -&gt; int:
+    if i &lt; len(xs):
+        return xs[i]
+    return default
+
+
+def average(xs: list[int]) -&gt; int:
+    if xs:
+        return sum(xs) // len(xs)
+    return 0
+
+
+def find(xs: list[int], target: int) -&gt; Nat:
+    i = 0
+    while i &lt; len(xs) and xs[i] != target:
+        i += 1
+    return i
+
+
+print(at_or([1, 2, 3], 1, 0), at_or([1, 2, 3], 9, 0), average([4, 8]), average([]), find([5, 6, 7], 7))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">at_or</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>, default: <span class="t">int</span>) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> i &lt; len(xs):
+        <span class="k">return</span> xs[i]
+    <span class="k">return</span> default
+
+
+<span class="k">def</span> <span class="f">average</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> xs:
+        <span class="k">return</span> sum(xs) // len(xs)
+    <span class="k">return</span> <span class="n">0</span>
+
+
+<span class="k">def</span> <span class="f">find</span>(xs: <span class="t">list</span>[<span class="t">int</span>], target: <span class="t">int</span>) -&gt; <span class="t">Nat</span>:
+    i = <span class="n">0</span>
+    <span class="k">while</span> i &lt; len(xs) <span class="k">and</span> xs[i] != target:
+        i += <span class="n">1</span>
+    <span class="k">return</span> i
+
+
+print(at_or([<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>], <span class="n">1</span>, <span class="n">0</span>), at_or([<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>], <span class="n">9</span>, <span class="n">0</span>), average([<span class="n">4</span>, <span class="n">8</span>]), average([]), find([<span class="n">5</span>, <span class="n">6</span>, <span class="n">7</span>], <span class="n">7</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t03_bounds.py</div><pre>2 0 6 0 2</pre></div>
+</figure>
+<p>The checker reads the tests. Inside <code>if i &lt; len(xs):</code> it knows the index is good. Inside <code>if xs:</code> it knows the list is not empty, so its length is not 0. In the <code>while</code> loop, the second part of the <code>and</code> relies on the first, as it does in Python.</p>
+<p>Take the test away and the file is refused:</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t03_bounds_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def average(xs: list[int]) -&gt; int:
+    return sum(xs) // len(xs)
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">average</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> sum(xs) // len(xs)
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t03_bounds_bad.py</div><pre>  File &quot;t03_bounds_bad.py&quot;, line 6
+    return sum(xs) // len(xs)
+TypeCheckError: (len xs == 0) != false of type Bool
+when checking that the expression refl has type
+(pos (len xs) == pos 0) ≡ false
+The checker cannot see that a condition this line relies on holds. xs[i] needs i &lt; len(xs), d[k] needs k in d, // and % need a divisor that is not 0, a - b on Nats needs b &lt;= a, and an assert inside a function needs its condition. known(c) gives the proof inside &#x27;if c:&#x27; or &#x27;while c:&#x27;, with c written the same way. Put the code under an &#x27;if&#x27; that tests it.</pre></div>
+</figure>
+
+<h2 id="none">None</h2>
+<p><code>Optional[T]</code> is a value that is a <code>T</code> or <code>None</code>. To use it as a <code>T</code>, test it first. After <code>if found is None: return ...</code>, the name holds a plain value.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t04_none.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def price(prices: dict[str, int], name: str) -&gt; int:
+    found = prices.get(name)          # an int, or None
+    if found is None:
+        return 0
+    return found * 2                  # here it is an int
+
+
+def longest(words: list[str]) -&gt; Optional[str]:
+    best = None
+    for w in words:
+        if best is None or len(w) &gt; len(best):
+            best = w
+    return best
+
+
+print(price({&quot;pen&quot;: 3}, &quot;pen&quot;), price({&quot;pen&quot;: 3}, &quot;ink&quot;), longest([&quot;a&quot;, &quot;ccc&quot;, &quot;bb&quot;]), longest([]))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">price</span>(prices: <span class="t">dict</span>[<span class="t">str</span>, <span class="t">int</span>], name: <span class="t">str</span>) -&gt; <span class="t">int</span>:
+    found = prices.get(name)          <span class="c"># an int, or None</span>
+    <span class="k">if</span> found <span class="k">is</span> <span class="k">None</span>:
+        <span class="k">return</span> <span class="n">0</span>
+    <span class="k">return</span> found * <span class="n">2</span>                  <span class="c"># here it is an int</span>
+
+
+<span class="k">def</span> <span class="f">longest</span>(words: <span class="t">list</span>[<span class="t">str</span>]) -&gt; <span class="t">Optional</span>[<span class="t">str</span>]:
+    best = <span class="k">None</span>
+    <span class="k">for</span> w <span class="k">in</span> words:
+        <span class="k">if</span> best <span class="k">is</span> <span class="k">None</span> <span class="k">or</span> len(w) &gt; len(best):
+            best = w
+    <span class="k">return</span> best
+
+
+print(price({<span class="s">&quot;pen&quot;</span>: <span class="n">3</span>}, <span class="s">&quot;pen&quot;</span>), price({<span class="s">&quot;pen&quot;</span>: <span class="n">3</span>}, <span class="s">&quot;ink&quot;</span>), longest([<span class="s">&quot;a&quot;</span>, <span class="s">&quot;ccc&quot;</span>, <span class="s">&quot;bb&quot;</span>]), longest([]))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t04_none.py</div><pre>6 0 ccc None</pre></div>
+</figure>
+<p>The second def never writes <code>Optional</code> for <code>best</code>. A local that is <code>None</code> in one place and a value in another is an Optional.</p>
+
+<h2 id="changing-a-list">Changing a list</h2>
+<p><code>append</code>, <code>xs[i] = v</code> and the other in-place changes work on a list the function made itself.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t05_change.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def squares(n: Nat) -&gt; list[Nat]:
+    out: list[Nat] = []
+    for i in range(n):
+        out.append(i * i)
+    return out
+
+
+def bumped(xs: list[int]) -&gt; list[int]:
+    ys = list(xs)                     # a copy that this function owns
+    for i in range(len(ys)):
+        ys[i] += 1
+    return ys
+
+
+print(squares(5), bumped([1, 2, 3]))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">squares</span>(n: <span class="t">Nat</span>) -&gt; <span class="t">list</span>[<span class="t">Nat</span>]:
+    out: <span class="t">list</span>[<span class="t">Nat</span>] = []
+    <span class="k">for</span> i <span class="k">in</span> range(n):
+        out.append(i * i)
+    <span class="k">return</span> out
+
+
+<span class="k">def</span> <span class="f">bumped</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">list</span>[<span class="t">int</span>]:
+    ys = <span class="t">list</span>(xs)                     <span class="c"># a copy that this function owns</span>
+    <span class="k">for</span> i <span class="k">in</span> range(len(ys)):
+        ys[i] += <span class="n">1</span>
+    <span class="k">return</span> ys
+
+
+print(squares(<span class="n">5</span>), bumped([<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>]))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t05_change.py</div><pre>[0, 1, 4, 9, 16] [2, 3, 4]</pre></div>
+</figure>
+<p>A list that came in as a parameter belongs to the caller too. Changing it in place would change what the caller sees, so it is refused. Copy it first with <code>list(xs)</code>.</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t05_change_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def add_one(xs: list[int]) -&gt; list[int]:
+    xs.append(1)
+    return xs
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">add_one</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">list</span>[<span class="t">int</span>]:
+    xs.append(<span class="n">1</span>)
+    <span class="k">return</span> xs
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t05_change_bad.py</div><pre>  File &quot;t05_change_bad.py&quot;, line 6
+    xs.append(1)
+TypeCheckError: &#x27;xs&#x27; may be shared here: it is a parameter, or it came from a call, or it was given another name, passed on or put inside another value. A shared list or dict cannot be changed in place, because the other holder would see the change. Make a copy first: xs = list(xs)</pre></div>
+</figure>
+
+<h2 id="loops">Loops</h2>
+<p>A <code>for</code> loop needs nothing extra. A <code>while</code> loop has to end, and the checker sees that by itself for the two commonest shapes: a count going up to a limit, and a count going down to 0.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t06_loops.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def triangle(n: Nat) -&gt; Nat:
+    i = 0
+    total = 0
+    while i &lt; n:
+        total += i
+        i += 1
+    return total
+
+
+def countdown(k: int) -&gt; list[int]:
+    out: list[int] = []
+    while k &gt; 0:
+        out.append(k)
+        k -= 1
+    return out
+
+
+print(triangle(5), countdown(3))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">triangle</span>(n: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    i = <span class="n">0</span>
+    total = <span class="n">0</span>
+    <span class="k">while</span> i &lt; n:
+        total += i
+        i += <span class="n">1</span>
+    <span class="k">return</span> total
+
+
+<span class="k">def</span> <span class="f">countdown</span>(k: <span class="t">int</span>) -&gt; <span class="t">list</span>[<span class="t">int</span>]:
+    out: <span class="t">list</span>[<span class="t">int</span>] = []
+    <span class="k">while</span> k &gt; <span class="n">0</span>:
+        out.append(k)
+        k -= <span class="n">1</span>
+    <span class="k">return</span> out
+
+
+print(triangle(<span class="n">5</span>), countdown(<span class="n">3</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t06_loops.py</div><pre>10 [3, 2, 1]</pre></div>
+</figure>
+<p>Any other <code>while</code> loop ends with <code>decreases(measure, proof)</code>, which names a number that gets smaller on every pass. <a href="proofs.html#while-loops">Proofs</a> shows one.</p>
+
+<h2 id="values-in-types">Values in types</h2>
+<p>This is where Pagda goes past ordinary type checkers. A type can mention a value. <code>Vec[A, n]</code> is a list of exactly <code>n</code> items, and <code>dot</code> takes two vectors of the same length.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t07_vec.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+def dot[n: Nat](a: Vec[int, n], b: Vec[int, n]) -&gt; int:
+    match a:
+        case Nil():
+            return 0
+        case Cons(x, xs):
+            match b:
+                case Cons(y, ys):
+                    return x * y + dot(xs, ys)
+
+
+v: Vec[int, 2] = Cons(1, Cons(2, Nil()))
+w: Vec[int, 2] = Cons(3, Cons(4, Nil()))
+print(dot(v, w))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">dot</span>[n: <span class="t">Nat</span>](a: <span class="t">Vec</span>[<span class="t">int</span>, n], b: <span class="t">Vec</span>[<span class="t">int</span>, n]) -&gt; <span class="t">int</span>:
+    <span class="k">match</span> a:
+        <span class="k">case</span> Nil():
+            <span class="k">return</span> <span class="n">0</span>
+        <span class="k">case</span> Cons(x, xs):
+            <span class="k">match</span> b:
+                <span class="k">case</span> Cons(y, ys):
+                    <span class="k">return</span> x * y + dot(xs, ys)
+
+
+v: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">2</span>] = Cons(<span class="n">1</span>, Cons(<span class="n">2</span>, Nil()))
+w: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">2</span>] = Cons(<span class="n">3</span>, Cons(<span class="n">4</span>, Nil()))
+print(dot(v, w))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t07_vec.py</div><pre>11</pre></div>
+</figure>
+<p>The second <code>match</code> has only one case. The checker knows <code>b</code> has the same length as <code>a</code>, so when <code>a</code> is a <code>Cons</code>, <code>b</code> is one too. Give <code>dot</code> vectors of different lengths and the file is refused:</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t07_vec_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+def dot[n: Nat](a: Vec[int, n], b: Vec[int, n]) -&gt; int:
+    match a:
+        case Nil():
+            return 0
+        case Cons(x, xs):
+            match b:
+                case Cons(y, ys):
+                    return x * y + dot(xs, ys)
+
+
+v: Vec[int, 2] = Cons(1, Cons(2, Nil()))
+w: Vec[int, 3] = Cons(3, Cons(4, Cons(5, Nil())))
+print(dot(v, w))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">dot</span>[n: <span class="t">Nat</span>](a: <span class="t">Vec</span>[<span class="t">int</span>, n], b: <span class="t">Vec</span>[<span class="t">int</span>, n]) -&gt; <span class="t">int</span>:
+    <span class="k">match</span> a:
+        <span class="k">case</span> Nil():
+            <span class="k">return</span> <span class="n">0</span>
+        <span class="k">case</span> Cons(x, xs):
+            <span class="k">match</span> b:
+                <span class="k">case</span> Cons(y, ys):
+                    <span class="k">return</span> x * y + dot(xs, ys)
+
+
+v: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">2</span>] = Cons(<span class="n">1</span>, Cons(<span class="n">2</span>, Nil()))
+w: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">3</span>] = Cons(<span class="n">3</span>, Cons(<span class="n">4</span>, Cons(<span class="n">5</span>, Nil())))
+print(dot(v, w))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t07_vec_bad.py</div><pre>  File &quot;t07_vec_bad.py&quot;, line 28
+    print(dot(v, w))
+TypeCheckError: 3 != 2 of type Nat
+when checking that the expression w has type Vec Int 2</pre></div>
+</figure>
+
+<h2 id="proofs">Proofs</h2>
+<p>A return type can be a statement. <code>add(n, 0) == n</code> as a type means "a proof that <code>add(n, 0)</code> equals <code>n</code>". The body builds that proof, and a recursive call plays the part of the induction step.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t08_proof.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def add(a: Nat, b: Nat) -&gt; Nat:
+    if a == 0:
+        return b
+    return add(a - 1, b) + 1
+
+
+# a fact about add, for every n. The return type is the fact.
+def add_zero(n: Nat) -&gt; add(n, 0) == n:
+    if n == 0:
+        return refl()                      # add(0, 0) is 0 by working it out
+    return cong(suc, add_zero(n - 1))      # the fact for n - 1 gives the fact for n
+
+
+assert add(20, 22) == 42                   # worked out by the checker
+print(add(20, 22), add_zero(7))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">add</span>(a: <span class="t">Nat</span>, b: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    <span class="k">if</span> a == <span class="n">0</span>:
+        <span class="k">return</span> b
+    <span class="k">return</span> add(a - <span class="n">1</span>, b) + <span class="n">1</span>
+
+
+<span class="c"># a fact about add, for every n. The return type is the fact.</span>
+<span class="k">def</span> <span class="f">add_zero</span>(n: <span class="t">Nat</span>) -&gt; add(n, <span class="n">0</span>) == n:
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> refl()                      <span class="c"># add(0, 0) is 0 by working it out</span>
+    <span class="k">return</span> cong(suc, add_zero(n - <span class="n">1</span>))      <span class="c"># the fact for n - 1 gives the fact for n</span>
+
+
+<span class="k">assert</span> add(<span class="n">20</span>, <span class="n">22</span>) == <span class="n">42</span>                   <span class="c"># worked out by the checker</span>
+print(add(<span class="n">20</span>, <span class="n">22</span>), add_zero(<span class="n">7</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t08_proof.py</div><pre>42 Refl()</pre></div>
+</figure>
+<p>An <code>assert</code> at the top level is worked out by the checker before the program runs. A false one is a type error.</p>
+
+<h2 id="asking-for-a-reason">Asking the caller for a reason</h2>
+<p>A def can take a proof as a parameter. <code>at</code> reads <code>xs[i]</code> with no test of its own, because its third parameter is a proof that <code>i</code> is in range. The caller gets that proof from its own test with <code>known(...)</code>.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t09_param.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def at(xs: list[int], i: Nat, ok: (i &lt; len(xs)) == True) -&gt; int:
+    return xs[i]                      # no test needed: the caller proved it
+
+
+def third_or_zero(xs: list[int]) -&gt; int:
+    if 2 &lt; len(xs):
+        return at(xs, 2, known(2 &lt; len(xs)))
+    return 0
+
+
+print(third_or_zero([7, 8, 9]), third_or_zero([7]))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">at</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>, ok: (i &lt; len(xs)) == <span class="k">True</span>) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> xs[i]                      <span class="c"># no test needed: the caller proved it</span>
+
+
+<span class="k">def</span> <span class="f">third_or_zero</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> <span class="n">2</span> &lt; len(xs):
+        <span class="k">return</span> at(xs, <span class="n">2</span>, known(<span class="n">2</span> &lt; len(xs)))
+    <span class="k">return</span> <span class="n">0</span>
+
+
+print(third_or_zero([<span class="n">7</span>, <span class="n">8</span>, <span class="n">9</span>]), third_or_zero([<span class="n">7</span>]))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t09_param.py</div><pre>9 0</pre></div>
+</figure>
+<p>A caller with no reason is refused:</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t09_param_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def at(xs: list[int], i: Nat, ok: (i &lt; len(xs)) == True) -&gt; int:
+    return xs[i]
+
+
+def third(xs: list[int]) -&gt; int:
+    return at(xs, 2, refl())
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">at</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>, ok: (i &lt; len(xs)) == <span class="k">True</span>) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> xs[i]
+
+
+<span class="k">def</span> <span class="f">third</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> at(xs, <span class="n">2</span>, refl())
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t09_param_bad.py</div><pre>  File &quot;t09_param_bad.py&quot;, line 10
+    return at(xs, 2, refl())
+TypeCheckError: (2 &lt; len xs) != true of type Bool
+when checking that the expression refl has type (2 &lt; len xs) ≡ true</pre></div>
+</figure>
+
+<h2 id="holes">Holes</h2>
+<p>Write <code>hole()</code> for a part you have not worked out. The checker checks everything else, then says what the hole needs and what is in scope there.</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t10_hole.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def plus_zero(n: Nat) -&gt; n + 0 == n:
+    if n == 0:
+        return refl()
+    return cong(suc, hole())
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">plus_zero</span>(n: <span class="t">Nat</span>) -&gt; n + <span class="n">0</span> == n:
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> refl()
+    <span class="k">return</span> cong(suc, hole())
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t10_hole.py</div><pre>  File &quot;t10_hole.py&quot;, line 8
+    return cong(suc, hole())
+TypeCheckError: this file has 1 hole, so it was not run.
+line 8: hole() needs a value of type
+  n₁ + 0 ≡ n₁
+with these names to build it from:
+  n₁ : Nat</pre></div>
+</figure>
+
+<h2 id="the-outside-world">The outside world</h2>
+<p>A checked file cannot open files or call libraries the checker has not read. A def marked <code>@trusted</code> is the door. The checker reads its annotations and believes them.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t11_trusted.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+@trusted
+def file_size(path: str) -&gt; Nat:
+    import os
+    return os.path.getsize(path)
+
+
+def is_big(path: str) -&gt; bool:
+    return 1000000 &lt; file_size(path)
+">Copy</button></figcaption>
+<pre class="code"><code><span class="d">@trusted</span>
+<span class="k">def</span> <span class="f">file_size</span>(path: <span class="t">str</span>) -&gt; <span class="t">Nat</span>:
+    <span class="k">import</span> os
+    <span class="k">return</span> os.path.getsize(path)
+
+
+<span class="k">def</span> <span class="f">is_big</span>(path: <span class="t">str</span>) -&gt; <span class="t">bool</span>:
+    <span class="k">return</span> <span class="n">1000000</span> &lt; file_size(path)
+</code></pre>
+<div class="result"><div class="cmd">$ pagda --check t11_trusted.py</div><pre>t11_trusted.py: no type errors</pre></div>
+</figure>
+<p>Checked files can also import each other: <code>from shapes import Point, width</code>.</p>
+
+<h2 id="where-next">Where next</h2>
+<ul>
+  <li><a href="proofs.html">Proofs</a> goes further into types that state facts.</li>
+  <li><a href="examples.html">Examples</a> has longer programs.</li>
+  <li><a href="reference.html">The reference</a> lists everything a checked file can hold.</li>
+</ul>
+</div></main>
+<footer class="foot"><div class="wrap">
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<nav aria-label="Footer"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html" aria-current="page">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></footer>
+<script src="site.js"></script>
+</body>
+</html>

@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pagda examples</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Complete Pagda programs with their real output.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><span class="mark" aria-hidden="true">⊢</span>Pagda</a>
+<nav class="nav" aria-label="Site"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html" aria-current="page">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></header>
+<main class="doc"><nav class="toc" aria-label="On this page"><div class="toc-title">On this page</div><a href="#a-report">A report from a list of records</a><a href="#an-array-of-ten">An array of exactly ten items</a><a href="#text-and-searching">Text, searching and loops</a><a href="#vectors">Vectors with their length in the type</a><a href="#safe-lookup">A lookup that cannot go out of range</a></nav><div class="content"><h1>Examples</h1>
+<p class="intro">Complete programs. Each was checked and run to build this page. They are also part of Pagda's test suite.</p>
+
+<h2 id="a-report">A report from a list of records</h2>
+<p>Ordinary Python: a class, lists, a dict, f-strings, a value that may be <code>None</code>, and a <code>main</code>. Nothing here is a proof. The checker still guarantees that <code>mean</code> never divides by zero and that <code>hist[g]</code> never misses.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">ex_grades.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="&quot;&quot;&quot;A program written the way a Python user would write it: grades and a report.&quot;&quot;&quot;
+from __future__ import annotations
+from dependent import *
+
+
+@dataclass
+class Student:
+    name: str
+    scores: list[int]
+
+
+def mean(xs: list[int]) -&gt; int:
+    if not xs:
+        return 0
+    return sum(xs) // len(xs)
+
+
+def best(xs: list[int]) -&gt; Optional[int]:
+    result = None
+    for x in xs:
+        if result is None or x &gt; result:
+            result = x
+    return result
+
+
+def grade(score: int) -&gt; str:
+    if score &gt;= 90:
+        return &quot;A&quot;
+    elif score &gt;= 80:
+        return &quot;B&quot;
+    elif score &gt;= 70:
+        return &quot;C&quot;
+    return &quot;F&quot;
+
+
+def histogram(students: list[Student]) -&gt; dict[str, int]:
+    counts: dict[str, int] = {}
+    for s in students:
+        g = grade(mean(s.scores))
+        counts[g] = counts.get(g, 0) + 1
+    return counts
+
+
+def top_students(students: list[Student], n: int = 2) -&gt; list[str]:
+    ranked = sorted([mean(s.scores) for s in students])
+    ranked.reverse()
+    names = []
+    for target in ranked[:n]:
+        for s in students:
+            if mean(s.scores) == target and s.name not in names:
+                names.append(s.name)
+    return names
+
+
+def report(students: list[Student]) -&gt; None:
+    for s in students:
+        b = best(s.scores)
+        line = f&quot;{s.name}: mean {mean(s.scores)} grade {grade(mean(s.scores))}&quot;
+        if b is not None:
+            line += f&quot; best {b}&quot;
+        print(line)
+    hist = histogram(students)
+    for g in [&quot;A&quot;, &quot;B&quot;, &quot;C&quot;, &quot;F&quot;]:
+        if g in hist:
+            print(g, &quot;#&quot; * hist[g])
+
+
+def main() -&gt; None:
+    students = [
+        Student(&quot;ada&quot;, [95, 88, 92]),
+        Student(&quot;bob&quot;, [72, 65, 80]),
+        Student(&quot;cy&quot;, []),
+        Student(&quot;dee&quot;, [85, 91]),
+    ]
+    report(students)
+    print(top_students(students))
+    print(top_students(students, n=1))
+
+
+if __name__ == &quot;__main__&quot;:
+    main()
+">Copy</button></figcaption>
+<pre class="code"><code><span class="s">&quot;&quot;</span><span class="s">&quot;A program written the way a Python user would write it: grades and a report.&quot;</span><span class="s">&quot;&quot;</span>
+<span class="k">from</span> __future__ <span class="k">import</span> annotations
+<span class="k">from</span> dependent <span class="k">import</span> *
+
+
+<span class="d">@dataclass</span>
+<span class="k">class</span> <span class="f">Student</span>:
+    name: <span class="t">str</span>
+    scores: <span class="t">list</span>[<span class="t">int</span>]
+
+
+<span class="k">def</span> <span class="f">mean</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> <span class="k">not</span> xs:
+        <span class="k">return</span> <span class="n">0</span>
+    <span class="k">return</span> sum(xs) // len(xs)
+
+
+<span class="k">def</span> <span class="f">best</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">Optional</span>[<span class="t">int</span>]:
+    result = <span class="k">None</span>
+    <span class="k">for</span> x <span class="k">in</span> xs:
+        <span class="k">if</span> result <span class="k">is</span> <span class="k">None</span> <span class="k">or</span> x &gt; result:
+            result = x
+    <span class="k">return</span> result
+
+
+<span class="k">def</span> <span class="f">grade</span>(score: <span class="t">int</span>) -&gt; <span class="t">str</span>:
+    <span class="k">if</span> score &gt;= <span class="n">90</span>:
+        <span class="k">return</span> <span class="s">&quot;A&quot;</span>
+    <span class="k">elif</span> score &gt;= <span class="n">80</span>:
+        <span class="k">return</span> <span class="s">&quot;B&quot;</span>
+    <span class="k">elif</span> score &gt;= <span class="n">70</span>:
+        <span class="k">return</span> <span class="s">&quot;C&quot;</span>
+    <span class="k">return</span> <span class="s">&quot;F&quot;</span>
+
+
+<span class="k">def</span> <span class="f">histogram</span>(students: <span class="t">list</span>[Student]) -&gt; <span class="t">dict</span>[<span class="t">str</span>, <span class="t">int</span>]:
+    counts: <span class="t">dict</span>[<span class="t">str</span>, <span class="t">int</span>] = {}
+    <span class="k">for</span> s <span class="k">in</span> students:
+        g = grade(mean(s.scores))
+        counts[g] = counts.get(g, <span class="n">0</span>) + <span class="n">1</span>
+    <span class="k">return</span> counts
+
+
+<span class="k">def</span> <span class="f">top_students</span>(students: <span class="t">list</span>[Student], n: <span class="t">int</span> = <span class="n">2</span>) -&gt; <span class="t">list</span>[<span class="t">str</span>]:
+    ranked = sorted([mean(s.scores) <span class="k">for</span> s <span class="k">in</span> students])
+    ranked.reverse()
+    names = []
+    <span class="k">for</span> target <span class="k">in</span> ranked[:n]:
+        <span class="k">for</span> s <span class="k">in</span> students:
+            <span class="k">if</span> mean(s.scores) == target <span class="k">and</span> s.name <span class="k">not</span> <span class="k">in</span> names:
+                names.append(s.name)
+    <span class="k">return</span> names
+
+
+<span class="k">def</span> <span class="f">report</span>(students: <span class="t">list</span>[Student]) -&gt; <span class="k">None</span>:
+    <span class="k">for</span> s <span class="k">in</span> students:
+        b = best(s.scores)
+        line = <span class="s">f&quot;{s.name}: mean {mean(s.scores)} grade {grade(mean(s.scores))}&quot;</span>
+        <span class="k">if</span> b <span class="k">is</span> <span class="k">not</span> <span class="k">None</span>:
+            line += <span class="s">f&quot; best {b}&quot;</span>
+        print(line)
+    hist = histogram(students)
+    <span class="k">for</span> g <span class="k">in</span> [<span class="s">&quot;A&quot;</span>, <span class="s">&quot;B&quot;</span>, <span class="s">&quot;C&quot;</span>, <span class="s">&quot;F&quot;</span>]:
+        <span class="k">if</span> g <span class="k">in</span> hist:
+            print(g, <span class="s">&quot;#&quot;</span> * hist[g])
+
+
+<span class="k">def</span> <span class="f">main</span>() -&gt; <span class="k">None</span>:
+    students = [
+        Student(<span class="s">&quot;ada&quot;</span>, [<span class="n">95</span>, <span class="n">88</span>, <span class="n">92</span>]),
+        Student(<span class="s">&quot;bob&quot;</span>, [<span class="n">72</span>, <span class="n">65</span>, <span class="n">80</span>]),
+        Student(<span class="s">&quot;cy&quot;</span>, []),
+        Student(<span class="s">&quot;dee&quot;</span>, [<span class="n">85</span>, <span class="n">91</span>]),
+    ]
+    report(students)
+    print(top_students(students))
+    print(top_students(students, n=<span class="n">1</span>))
+
+
+<span class="k">if</span> __name__ == <span class="s">&quot;__main__&quot;</span>:
+    main()
+</code></pre>
+<div class="result"><div class="cmd">$ pagda ex_grades.py</div><pre>ada: mean 91 grade A best 95
+bob: mean 72 grade C best 80
+cy: mean 0 grade F
+dee: mean 88 grade B best 91
+A #
+B #
+C #
+F #
+[&#x27;ada&#x27;, &#x27;dee&#x27;]
+[&#x27;ada&#x27;]</pre></div>
+</figure>
+
+<h2 id="an-array-of-ten">An array of exactly ten items</h2>
+<p>A class can carry a proof about its own fields. <code>size</code> is a proof that <code>items</code> has ten items, so an <code>Array10</code> with any other length cannot be built.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">ex_array10.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+@dataclass
+class Array10:
+    items: list[int]
+    size: len(items) == 10          # a proof: the list has exactly 10 items
+
+    def get(self, i: Nat, ok: (i &lt; 10) == True) -&gt; int:
+        inside: (i &lt; len(self.items)) == True = subst(lambda n: Eq[i &lt; n, True], sym(self.size), ok)
+        return self.items[i]
+
+    def total(self) -&gt; int:
+        return sum(self.items)
+
+
+a: Array10 = Array10([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], refl())
+print(a.get(0, refl()), a.get(9, refl()), a.total())
+">Copy</button></figcaption>
+<pre class="code"><code><span class="d">@dataclass</span>
+<span class="k">class</span> <span class="f">Array10</span>:
+    items: <span class="t">list</span>[<span class="t">int</span>]
+    size: len(items) == <span class="n">10</span>          <span class="c"># a proof: the list has exactly 10 items</span>
+
+    <span class="k">def</span> <span class="f">get</span>(self, i: <span class="t">Nat</span>, ok: (i &lt; <span class="n">10</span>) == <span class="k">True</span>) -&gt; <span class="t">int</span>:
+        inside: (i &lt; len(self.items)) == <span class="k">True</span> = subst(<span class="k">lambda</span> n: <span class="t">Eq</span>[i &lt; n, <span class="k">True</span>], sym(self.size), ok)
+        <span class="k">return</span> self.items[i]
+
+    <span class="k">def</span> <span class="f">total</span>(self) -&gt; <span class="t">int</span>:
+        <span class="k">return</span> sum(self.items)
+
+
+a: Array10 = Array10([<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>, <span class="n">4</span>, <span class="n">5</span>, <span class="n">6</span>, <span class="n">7</span>, <span class="n">8</span>, <span class="n">9</span>, <span class="n">10</span>], refl())
+print(a.get(<span class="n">0</span>, refl()), a.get(<span class="n">9</span>, refl()), a.total())
+</code></pre>
+<div class="result"><div class="cmd">$ pagda ex_array10.py</div><pre>1 10 55</pre></div>
+</figure>
+<p><code>get</code> asks its caller for a proof that the index is below 10. The <code>inside</code> line joins that with the <code>size</code> proof to show the index is inside the list. A list of the wrong length is refused:</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">ex_array10_bad.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+@dataclass
+class Array10:
+    items: list[int]
+    size: len(items) == 10
+
+
+short: Array10 = Array10([1, 2, 3], refl())
+">Copy</button></figcaption>
+<pre class="code"><code><span class="d">@dataclass</span>
+<span class="k">class</span> <span class="f">Array10</span>:
+    items: <span class="t">list</span>[<span class="t">int</span>]
+    size: len(items) == <span class="n">10</span>
+
+
+short: Array10 = Array10([<span class="n">1</span>, <span class="n">2</span>, <span class="n">3</span>], refl())
+</code></pre>
+<div class="result"><div class="cmd">$ pagda ex_array10_bad.py</div><pre>  File &quot;ex_array10_bad.py&quot;, line 11
+    short: Array10 = Array10([1, 2, 3], refl())
+TypeCheckError: 3 != 10 of type Nat
+when checking that the expression refl has type
+len (pos 1 ∷ pos 2 ∷ pos 3 ∷ []) ≡ 10</pre></div>
+</figure>
+
+<h2 id="text-and-searching">Text, searching and loops</h2>
+<p>String handling, a dict of counts, a binary search and several <code>while</code> loops. The last def is a proof, imported from <code>lemmas</code>, that joining two lists adds their lengths.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">ex_words.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="&quot;&quot;&quot;Text processing, searching and while loops, with one proved property.&quot;&quot;&quot;
+from __future__ import annotations
+from dependent import *
+from lemmas import len_append
+
+
+def tokenize(text: str) -&gt; list[str]:
+    words = []
+    current = &quot;&quot;
+    for ch in text:
+        if ch == &quot; &quot; or ch == &quot;\n&quot;:
+            if current:
+                words.append(current)
+                current = &quot;&quot;
+        else:
+            current += ch
+    if current:
+        words.append(current)
+    return words
+
+
+def word_counts(words: list[str]) -&gt; dict[str, int]:
+    counts: dict[str, int] = {}
+    for w in words:
+        if w in counts:
+            counts[w] += 1
+        else:
+            counts[w] = 1
+    return counts
+
+
+def longest(words: list[str]) -&gt; str:
+    best = &quot;&quot;
+    for w in words:
+        if len(w) &gt; len(best):
+            best = w
+    return best
+
+
+def is_sorted(xs: list[int]) -&gt; bool:
+    i = 1
+    while i &lt; len(xs):
+        if i &gt; 0 and xs[i - 1] &gt; xs[i]:
+            return False
+        i += 1
+    return True
+
+
+def binary_search(xs: list[int], target: int) -&gt; int:
+    lo = 0
+    hi = len(xs)
+    steps = 0
+    while steps &lt; len(xs) and lo &lt; hi:
+        mid = (lo + hi) // 2
+        if mid &lt; len(xs):
+            if xs[mid] == target:
+                return mid
+            if xs[mid] &lt; target:
+                lo = mid + 1
+            else:
+                hi = mid
+        steps += 1
+    return -1
+
+
+def collatz_steps(n: int, limit: int = 1000) -&gt; int:
+    steps = 0
+    left = limit
+    while left &gt; 0:
+        if n == 1:
+            break
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        steps += 1
+        left -= 1
+    return steps
+
+
+def fib(n: Nat) -&gt; Nat:
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+
+def caesar(text: str, table: dict[str, str]) -&gt; str:
+    out = &quot;&quot;
+    for ch in text:
+        out += table.get(ch, ch)
+    return out
+
+
+# a property, proved once for every pair of lists
+def joined_length(a: list[str], b: list[str]) -&gt; len(a + b) == len(a) + len(b):
+    return len_append(a, b)
+
+
+def main() -&gt; None:
+    text = &quot;the quick brown fox jumps over the lazy dog the end&quot;
+    words = tokenize(text)
+    counts = word_counts(words)
+    print(len(words), longest(words), counts[&quot;the&quot;] if &quot;the&quot; in counts else 0)
+    for w, c in counts.items():
+        if c &gt; 1:
+            print(f&quot;{w} appears {c} times&quot;)
+    print(is_sorted([1, 2, 2, 5]), is_sorted([3, 1]), binary_search([1, 3, 5, 7, 9], 7), binary_search([1, 3, 5], 4))
+    print(collatz_steps(27), fib(10), caesar(&quot;abc&quot;, {&quot;a&quot;: &quot;b&quot;, &quot;b&quot;: &quot;c&quot;}))
+
+
+assert tokenize(&quot;a  b\nc&quot;) == [&quot;a&quot;, &quot;b&quot;, &quot;c&quot;]
+assert fib(10) == 55
+assert binary_search([1, 3, 5, 7, 9], 7) == 3
+assert is_sorted([1, 2, 2, 5]) and not is_sorted([3, 1])
+assert collatz_steps(6) == 8
+
+if __name__ == &quot;__main__&quot;:
+    main()
+">Copy</button></figcaption>
+<pre class="code"><code><span class="s">&quot;&quot;</span><span class="s">&quot;Text processing, searching and while loops, with one proved property.&quot;</span><span class="s">&quot;&quot;</span>
+<span class="k">from</span> __future__ <span class="k">import</span> annotations
+<span class="k">from</span> dependent <span class="k">import</span> *
+<span class="k">from</span> lemmas <span class="k">import</span> len_append
+
+
+<span class="k">def</span> <span class="f">tokenize</span>(text: <span class="t">str</span>) -&gt; <span class="t">list</span>[<span class="t">str</span>]:
+    words = []
+    current = <span class="s">&quot;&quot;</span>
+    <span class="k">for</span> ch <span class="k">in</span> text:
+        <span class="k">if</span> ch == <span class="s">&quot; &quot;</span> <span class="k">or</span> ch == <span class="s">&quot;\n&quot;</span>:
+            <span class="k">if</span> current:
+                words.append(current)
+                current = <span class="s">&quot;&quot;</span>
+        <span class="k">else</span>:
+            current += ch
+    <span class="k">if</span> current:
+        words.append(current)
+    <span class="k">return</span> words
+
+
+<span class="k">def</span> <span class="f">word_counts</span>(words: <span class="t">list</span>[<span class="t">str</span>]) -&gt; <span class="t">dict</span>[<span class="t">str</span>, <span class="t">int</span>]:
+    counts: <span class="t">dict</span>[<span class="t">str</span>, <span class="t">int</span>] = {}
+    <span class="k">for</span> w <span class="k">in</span> words:
+        <span class="k">if</span> w <span class="k">in</span> counts:
+            counts[w] += <span class="n">1</span>
+        <span class="k">else</span>:
+            counts[w] = <span class="n">1</span>
+    <span class="k">return</span> counts
+
+
+<span class="k">def</span> <span class="f">longest</span>(words: <span class="t">list</span>[<span class="t">str</span>]) -&gt; <span class="t">str</span>:
+    best = <span class="s">&quot;&quot;</span>
+    <span class="k">for</span> w <span class="k">in</span> words:
+        <span class="k">if</span> len(w) &gt; len(best):
+            best = w
+    <span class="k">return</span> best
+
+
+<span class="k">def</span> <span class="f">is_sorted</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">bool</span>:
+    i = <span class="n">1</span>
+    <span class="k">while</span> i &lt; len(xs):
+        <span class="k">if</span> i &gt; <span class="n">0</span> <span class="k">and</span> xs[i - <span class="n">1</span>] &gt; xs[i]:
+            <span class="k">return</span> <span class="k">False</span>
+        i += <span class="n">1</span>
+    <span class="k">return</span> <span class="k">True</span>
+
+
+<span class="k">def</span> <span class="f">binary_search</span>(xs: <span class="t">list</span>[<span class="t">int</span>], target: <span class="t">int</span>) -&gt; <span class="t">int</span>:
+    lo = <span class="n">0</span>
+    hi = len(xs)
+    steps = <span class="n">0</span>
+    <span class="k">while</span> steps &lt; len(xs) <span class="k">and</span> lo &lt; hi:
+        mid = (lo + hi) // <span class="n">2</span>
+        <span class="k">if</span> mid &lt; len(xs):
+            <span class="k">if</span> xs[mid] == target:
+                <span class="k">return</span> mid
+            <span class="k">if</span> xs[mid] &lt; target:
+                lo = mid + <span class="n">1</span>
+            <span class="k">else</span>:
+                hi = mid
+        steps += <span class="n">1</span>
+    <span class="k">return</span> -<span class="n">1</span>
+
+
+<span class="k">def</span> <span class="f">collatz_steps</span>(n: <span class="t">int</span>, limit: <span class="t">int</span> = <span class="n">1000</span>) -&gt; <span class="t">int</span>:
+    steps = <span class="n">0</span>
+    left = limit
+    <span class="k">while</span> left &gt; <span class="n">0</span>:
+        <span class="k">if</span> n == <span class="n">1</span>:
+            <span class="k">break</span>
+        <span class="k">if</span> n % <span class="n">2</span> == <span class="n">0</span>:
+            n = n // <span class="n">2</span>
+        <span class="k">else</span>:
+            n = <span class="n">3</span> * n + <span class="n">1</span>
+        steps += <span class="n">1</span>
+        left -= <span class="n">1</span>
+    <span class="k">return</span> steps
+
+
+<span class="k">def</span> <span class="f">fib</span>(n: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    a, b = <span class="n">0</span>, <span class="n">1</span>
+    <span class="k">for</span> _ <span class="k">in</span> range(n):
+        a, b = b, a + b
+    <span class="k">return</span> a
+
+
+<span class="k">def</span> <span class="f">caesar</span>(text: <span class="t">str</span>, table: <span class="t">dict</span>[<span class="t">str</span>, <span class="t">str</span>]) -&gt; <span class="t">str</span>:
+    out = <span class="s">&quot;&quot;</span>
+    <span class="k">for</span> ch <span class="k">in</span> text:
+        out += table.get(ch, ch)
+    <span class="k">return</span> out
+
+
+<span class="c"># a property, proved once for every pair of lists</span>
+<span class="k">def</span> <span class="f">joined_length</span>(a: <span class="t">list</span>[<span class="t">str</span>], b: <span class="t">list</span>[<span class="t">str</span>]) -&gt; len(a + b) == len(a) + len(b):
+    <span class="k">return</span> len_append(a, b)
+
+
+<span class="k">def</span> <span class="f">main</span>() -&gt; <span class="k">None</span>:
+    text = <span class="s">&quot;the quick brown fox jumps over the lazy dog the end&quot;</span>
+    words = tokenize(text)
+    counts = word_counts(words)
+    print(len(words), longest(words), counts[<span class="s">&quot;the&quot;</span>] <span class="k">if</span> <span class="s">&quot;the&quot;</span> <span class="k">in</span> counts <span class="k">else</span> <span class="n">0</span>)
+    <span class="k">for</span> w, c <span class="k">in</span> counts.items():
+        <span class="k">if</span> c &gt; <span class="n">1</span>:
+            print(<span class="s">f&quot;{w} appears {c} times&quot;</span>)
+    print(is_sorted([<span class="n">1</span>, <span class="n">2</span>, <span class="n">2</span>, <span class="n">5</span>]), is_sorted([<span class="n">3</span>, <span class="n">1</span>]), binary_search([<span class="n">1</span>, <span class="n">3</span>, <span class="n">5</span>, <span class="n">7</span>, <span class="n">9</span>], <span class="n">7</span>), binary_search([<span class="n">1</span>, <span class="n">3</span>, <span class="n">5</span>], <span class="n">4</span>))
+    print(collatz_steps(<span class="n">27</span>), fib(<span class="n">10</span>), caesar(<span class="s">&quot;abc&quot;</span>, {<span class="s">&quot;a&quot;</span>: <span class="s">&quot;b&quot;</span>, <span class="s">&quot;b&quot;</span>: <span class="s">&quot;c&quot;</span>}))
+
+
+<span class="k">assert</span> tokenize(<span class="s">&quot;a  b\nc&quot;</span>) == [<span class="s">&quot;a&quot;</span>, <span class="s">&quot;b&quot;</span>, <span class="s">&quot;c&quot;</span>]
+<span class="k">assert</span> fib(<span class="n">10</span>) == <span class="n">55</span>
+<span class="k">assert</span> binary_search([<span class="n">1</span>, <span class="n">3</span>, <span class="n">5</span>, <span class="n">7</span>, <span class="n">9</span>], <span class="n">7</span>) == <span class="n">3</span>
+<span class="k">assert</span> is_sorted([<span class="n">1</span>, <span class="n">2</span>, <span class="n">2</span>, <span class="n">5</span>]) <span class="k">and</span> <span class="k">not</span> is_sorted([<span class="n">3</span>, <span class="n">1</span>])
+<span class="k">assert</span> collatz_steps(<span class="n">6</span>) == <span class="n">8</span>
+
+<span class="k">if</span> __name__ == <span class="s">&quot;__main__&quot;</span>:
+    main()
+</code></pre>
+<div class="result"><div class="cmd">$ pagda ex_words.py</div><pre>11 quick 3
+the appears 3 times
+True False 3 -1
+111 55 bcc</pre></div>
+</figure>
+
+<h2 id="vectors">Vectors with their length in the type</h2>
+<p>A dot product that only accepts two vectors of the same length.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t07_vec.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+def dot[n: Nat](a: Vec[int, n], b: Vec[int, n]) -&gt; int:
+    match a:
+        case Nil():
+            return 0
+        case Cons(x, xs):
+            match b:
+                case Cons(y, ys):
+                    return x * y + dot(xs, ys)
+
+
+v: Vec[int, 2] = Cons(1, Cons(2, Nil()))
+w: Vec[int, 2] = Cons(3, Cons(4, Nil()))
+print(dot(v, w))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">dot</span>[n: <span class="t">Nat</span>](a: <span class="t">Vec</span>[<span class="t">int</span>, n], b: <span class="t">Vec</span>[<span class="t">int</span>, n]) -&gt; <span class="t">int</span>:
+    <span class="k">match</span> a:
+        <span class="k">case</span> Nil():
+            <span class="k">return</span> <span class="n">0</span>
+        <span class="k">case</span> Cons(x, xs):
+            <span class="k">match</span> b:
+                <span class="k">case</span> Cons(y, ys):
+                    <span class="k">return</span> x * y + dot(xs, ys)
+
+
+v: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">2</span>] = Cons(<span class="n">1</span>, Cons(<span class="n">2</span>, Nil()))
+w: <span class="t">Vec</span>[<span class="t">int</span>, <span class="n">2</span>] = Cons(<span class="n">3</span>, Cons(<span class="n">4</span>, Nil()))
+print(dot(v, w))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t07_vec.py</div><pre>11</pre></div>
+</figure>
+
+<h2 id="safe-lookup">A lookup that cannot go out of range</h2>
+<p><code>Fin[n]</code> is a number below <code>n</code>. Indexing a <code>Vec[A, n]</code> with a <code>Fin[n]</code> needs no test and no proof at the call.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_unreachable.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+class Fin[n: Nat](Data): ...          # a number below n
+
+
+@constructor
+def FZ[n: Nat]() -&gt; Fin[n + 1]: ...
+
+
+@constructor
+def FS[n: Nat](before: Fin[n]) -&gt; Fin[n + 1]: ...
+
+
+def lookup[A, n: Nat](xs: Vec[A, n], i: Fin[n]) -&gt; A:
+    match xs:
+        case Cons(x, rest):
+            match i:
+                case FZ():
+                    return x
+                case FS(j):
+                    return lookup(rest, j)
+
+
+def nothing_below_zero[A](i: Fin[0]) -&gt; A:
+    match i:
+        case _:
+            return unreachable()
+
+
+v: Vec[str, 3] = Cons(&quot;a&quot;, Cons(&quot;b&quot;, Cons(&quot;c&quot;, Nil())))
+print(lookup(v, FZ()), lookup(v, FS(FS(FZ()))))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">class</span> <span class="t">Fin</span>[n: <span class="t">Nat</span>](<span class="t">Data</span>): ...          <span class="c"># a number below n</span>
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">FZ</span>[n: <span class="t">Nat</span>]() -&gt; <span class="t">Fin</span>[n + <span class="n">1</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">FS</span>[n: <span class="t">Nat</span>](before: <span class="t">Fin</span>[n]) -&gt; <span class="t">Fin</span>[n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">lookup</span>[A, n: <span class="t">Nat</span>](xs: <span class="t">Vec</span>[A, n], i: <span class="t">Fin</span>[n]) -&gt; A:
+    <span class="k">match</span> xs:
+        <span class="k">case</span> Cons(x, rest):
+            <span class="k">match</span> i:
+                <span class="k">case</span> FZ():
+                    <span class="k">return</span> x
+                <span class="k">case</span> FS(j):
+                    <span class="k">return</span> lookup(rest, j)
+
+
+<span class="k">def</span> <span class="f">nothing_below_zero</span>[A](i: <span class="t">Fin</span>[<span class="n">0</span>]) -&gt; A:
+    <span class="k">match</span> i:
+        <span class="k">case</span> _:
+            <span class="k">return</span> unreachable()
+
+
+v: <span class="t">Vec</span>[<span class="t">str</span>, <span class="n">3</span>] = Cons(<span class="s">&quot;a&quot;</span>, Cons(<span class="s">&quot;b&quot;</span>, Cons(<span class="s">&quot;c&quot;</span>, Nil())))
+print(lookup(v, FZ()), lookup(v, FS(FS(FZ()))))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_unreachable.py</div><pre>a c</pre></div>
+</figure>
+</div></main>
+<footer class="foot"><div class="wrap">
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<nav aria-label="Footer"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html" aria-current="page">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></footer>
+<script src="site.js"></script>
+</body>
+</html>

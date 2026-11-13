@@ -1,0 +1,60 @@
+<!-- title: Get started with Pagda | desc: Build Pagda from source, run a Python file, and check your first file. -->
+<h1>Get started</h1>
+<p class="intro">Build the <code>pagda</code> program, run a file, then check one.</p>
+
+<h2 id="what-you-need">What you need</h2>
+<ul>
+  <li><strong>A C compiler and make.</strong> gcc or clang. This is all that is needed to build Pagda and run ordinary Python files.</li>
+  <li><strong>Agda 2.8.0.</strong> Needed to check files. The <a href="https://agda.readthedocs.io/en/v2.8.0/getting-started/installation.html">Agda documentation</a> explains how to install it. Pagda uses none of Agda's libraries.</li>
+  <li><strong>Python 3.12 or newer.</strong> Only for running Pagda's own tests, which compare its output with <code>python3</code>.</li>
+</ul>
+
+<h2 id="build">Build</h2>
+<p>In the folder that holds the Pagda source:</p>
+<pre class="code plain"><code>make          # builds ./pagda
+make test     # runs every test</code></pre>
+<p>The result is one program, <code>pagda</code>, with its standard library inside it. Copy it anywhere on your <code>PATH</code>.</p>
+
+<h2 id="run">Run a Python file</h2>
+<pre class="code plain"><code>pagda script.py        # run a file
+pagda -c 'print(1)'    # run a string
+pagda                  # interactive prompt</code></pre>
+<p>A file that does not import <code>dependent</code> runs as ordinary Python 3. Pagda's interpreter covers the core of the language and a small standard library. The <a href="faq.html#is-it-python">FAQ</a> lists what is in and what is out.</p>
+
+<h2 id="first-checked-file">Your first checked file</h2>
+<p>A checked file starts with two lines. The first makes Python leave annotations alone. The second asks for checking.</p>
+<pre class="code plain"><code><span class="k">from</span> __future__ <span class="k">import</span> annotations
+<span class="k">from</span> dependent <span class="k">import</span> *</code></pre>
+<p>Save this as <code>t01_hello.py</code>. The Copy button gives the whole file, with those two lines.</p>
+{{run:t01_hello}}
+<p>Now break it. Call a def with the wrong kind of value:</p>
+{{refuse:t02_types_bad}}
+<p>The error comes from Agda and names the Python line. The table in the <a href="reference.html#reading-the-error-messages">reference</a> shows how to read Agda's spelling of types.</p>
+
+<h2 id="commands">Commands</h2>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>pagda file.py</code></td><td>Checks the file if it is a checked file, then runs it.</td></tr>
+<tr><td><code>pagda --check file.py</code></td><td>Checks the file and does not run it.</td></tr>
+<tr><td><code>pagda --agda file.py</code></td><td>Prints the Agda text the file is translated to.</td></tr>
+</tbody></table></div>
+
+<h2 id="settings">Settings</h2>
+<div class="table"><table>
+<thead><tr><th>Name</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>PAGDA_AGDA</code></td><td>The path of the <code>agda</code> program, when it is not on your <code>PATH</code>.</td></tr>
+<tr><td><code>XDG_CACHE_HOME</code></td><td>Where checked results are kept. The default is <code>~/.cache/pagda</code>.</td></tr>
+</tbody></table></div>
+<p>A file that passed is remembered, so Agda runs again only when the file changes. If <code>agda</code> cannot be started, a checked file is refused and does not run.</p>
+
+<h2 id="same-file-under-python">The same file under python3</h2>
+<p>A checked file is a Python file. It runs under <code>python3</code> 3.12 or newer with <code>lib/dependent.py</code> beside it (and <code>lib/lemmas.py</code>, if it uses the ready-made proofs), and prints the same output. There the types are not checked.</p>
+
+<h2 id="next">Next</h2>
+<ul>
+  <li><a href="tour.html">The tour</a> walks through the language one idea at a time.</li>
+  <li><a href="proofs.html">Proofs</a> explains types that state facts.</li>
+  <li><a href="reference.html">The reference</a> lists everything a checked file can hold.</li>
+</ul>

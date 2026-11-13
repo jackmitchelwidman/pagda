@@ -1,0 +1,68 @@
+<!-- title: Proofs in Pagda | desc: Types that state facts, and Python functions that prove them. -->
+<h1>Proofs</h1>
+<p class="intro">In Pagda a type can be a statement, and a value of that type is a proof of it. This page shows how to state a fact and how to prove one, in Python syntax.</p>
+
+<h2 id="statements-as-types">Statements as types</h2>
+<p>In an annotation, <code>a == b</code> is the type of proofs that <code>a</code> equals <code>b</code>. <code>refl()</code> is the proof that a thing equals itself. The checker works both sides out, so <code>refl()</code> proves any equation whose two sides come to the same thing.</p>
+{{run:t08_proof}}
+<p><code>add_zero</code> has two cases. When <code>n</code> is 0, both sides work out to 0 and <code>refl()</code> is enough. Otherwise the recursive call proves the fact for <code>n - 1</code>, and <code>cong(suc, ...)</code> adds one to both sides of it. The checker also makes sure the recursion ends, which is what makes this a proof for every <code>n</code>.</p>
+<div class="table"><table>
+<thead><tr><th>Write</th><th>To get</th></tr></thead>
+<tbody>
+<tr><td><code>refl()</code></td><td>a proof of <code>x == x</code></td></tr>
+<tr><td><code>sym(p)</code></td><td>from <code>a == b</code>, a proof of <code>b == a</code></td></tr>
+<tr><td><code>trans(p, q)</code></td><td>from <code>a == b</code> and <code>b == c</code>, a proof of <code>a == c</code></td></tr>
+<tr><td><code>cong(f, p)</code></td><td>from <code>a == b</code>, a proof of <code>f(a) == f(b)</code></td></tr>
+<tr><td><code>subst(P, p, x)</code></td><td>from <code>a == b</code> and a <code>P(a)</code>, a <code>P(b)</code></td></tr>
+</tbody></table></div>
+
+<h2 id="tests-teach-the-checker">Tests teach the checker</h2>
+<p>Inside <code>if c:</code> the checker replaces <code>c</code> by <code>True</code> in what is left to prove, and by <code>False</code> in the other branch. So a proof about a function that tests <code>a &lt; b</code> can test <code>a &lt; b</code> itself and finish each branch separately.</p>
+{{run:p_if}}
+<p><code>Or[A, B]</code> is declared in the file: a proof of <code>A</code> or a proof of <code>B</code>. Inside a type, write <code>Eq[x, y]</code> for the statement <code>x == y</code>.</p>
+
+<h2 id="known">Getting the proof of a test</h2>
+<p>A test also gives a proof you can pass on. Inside <code>if c:</code> or <code>while c:</code>, <code>known(c)</code> is the proof that <code>c</code> is true. In the <code>else</code> part, <code>known(not c)</code> is the proof for the other way.</p>
+{{run:t09_param}}
+<p>A parameter whose type is <code>c == True</code> works the other way round: inside the def, the checker treats <code>c</code> as known.</p>
+
+<h2 id="impossible-cases">Impossible cases</h2>
+<p>Some types have no values. <code>Fin[n]</code> is a number below <code>n</code>, so <code>Fin[0]</code> is empty. A <code>match</code> on such a value has nothing to handle, and <code>case _: return unreachable()</code> says so. The checker accepts it only when it can see that no value gets there.</p>
+{{run:p_unreachable}}
+<p><code>lookup</code> has no case for an empty vector. An index of type <code>Fin[n]</code> into a <code>Vec[A, n]</code> cannot be out of range, and the checker sees that the missing case cannot happen.</p>
+
+<h2 id="types-that-depend-on-arguments">Function types that mention their argument</h2>
+<p><code>Fn[A, B]</code> is the type of functions from <code>A</code> to <code>B</code>. An argument can be named, and the types after it can then use the name. That is enough to write induction itself as a def:</p>
+{{run:p_fn}}
+<p>The step takes a number <code>k</code> and a proof of <code>P(k)</code>, and gives a proof of <code>P(k + 1)</code>.</p>
+
+<h2 id="ready-made-proofs">Ready-made proofs</h2>
+<p><code>lemmas</code> is a checked file that ships with Pagda. It holds facts about numbers, <code>&lt;</code> and lists. Import the ones you need by name.</p>
+{{run:p_lemmas}}
+<div class="table"><table>
+<thead><tr><th>Name</th><th>The fact</th></tr></thead>
+<tbody>
+<tr><td><code>plus_zero</code>, <code>plus_suc</code>, <code>plus_comm</code>, <code>plus_assoc</code></td><td>addition on <code>Nat</code></td></tr>
+<tr><td><code>times_zero</code>, <code>times_one</code></td><td>multiplication on <code>Nat</code></td></tr>
+<tr><td><code>lt_suc</code>, <code>lt_irrefl</code>, <code>lt_asym</code>, <code>lt_trans</code></td><td><code>&lt;</code> on <code>Nat</code></td></tr>
+<tr><td><code>monus_step</code>, <code>down_step</code></td><td>measures for <code>while</code> loops</td></tr>
+<tr><td><code>append_nil</code>, <code>append_assoc</code>, <code>len_append</code></td><td>lists</td></tr>
+<tr><td><code>false_is_not_true</code>, <code>true_is_not_false</code></td><td>the two bools differ</td></tr>
+</tbody></table></div>
+
+<h2 id="while-loops">While loops</h2>
+<p>A <code>while</code> loop outside the two shapes the checker handles by itself ends with <code>decreases(measure, proof)</code>. The measure is a <code>Nat</code> worked out from the loop's variables. The proof shows that the measure at the end of a pass is smaller than it was at the start.</p>
+{{run:p_while}}
+<p>Here the measure is <code>left</code> itself. <code>was</code> remembers its value at the start of the pass, <code>known(0 &lt; was)</code> is the loop's own test, and <code>down_step</code> turns those into the proof.</p>
+
+<h2 id="holes">Working with holes</h2>
+<p>Proofs are written a piece at a time. Put <code>hole()</code> where you are stuck and run the checker. It reports the type the hole needs and the names you can build it from.</p>
+{{refuse:t10_hole}}
+<p>Here the hole needs <code>n₁ + 0 ≡ n₁</code>, where <code>n₁</code> is <code>n - 1</code>. That is the fact itself for a smaller number, so the answer is the recursive call <code>plus_zero(n - 1)</code>.</p>
+
+<h2 id="limits">What proofs cannot reach yet</h2>
+<ul>
+  <li>A property of a loop's result. Write the loop as a recursive def to prove something about it.</li>
+  <li>Types of types beyond the first level. A constructor field cannot hold a type.</li>
+  <li>Explicit type arguments at a call. The checker always works them out.</li>
+</ul>

@@ -1,0 +1,64 @@
+<!-- title: A tour of Pagda | desc: The Pagda language one idea at a time, from an ordinary program to types that mention values. -->
+<h1>A tour of Pagda</h1>
+<p class="intro">Ten short programs. Each was run to build this page, and the panel under it shows what <code>pagda</code> printed. Every file starts with the two lines from <a href="start.html#first-checked-file">Get started</a>; the Copy button includes them.</p>
+
+<h2 id="an-ordinary-program">An ordinary program</h2>
+<p>A checked file looks like typed Python. Every def says what it takes and what it gives back. A class with fields is a <code>@dataclass</code>.</p>
+{{run:t01_hello}}
+<p>Two number types appear here. <code>int</code> is any whole number. <code>Nat</code> is 0, 1, 2 and up, the type of counts and positions. A <code>Nat</code> is accepted wherever an <code>int</code> is wanted.</p>
+
+<h2 id="things-that-can-fail">Things that can fail</h2>
+<p>Reading <code>xs[i]</code> fails when <code>i</code> is past the end. Dividing fails when the divisor is 0. In a checked file each of these needs a reason it is fine, and the usual reason is a test you would write anyway.</p>
+{{run:t03_bounds}}
+<p>The checker reads the tests. Inside <code>if i &lt; len(xs):</code> it knows the index is good. Inside <code>if xs:</code> it knows the list is not empty, so its length is not 0. In the <code>while</code> loop, the second part of the <code>and</code> relies on the first, as it does in Python.</p>
+<p>Take the test away and the file is refused:</p>
+{{refuse:t03_bounds_bad}}
+
+<h2 id="none">None</h2>
+<p><code>Optional[T]</code> is a value that is a <code>T</code> or <code>None</code>. To use it as a <code>T</code>, test it first. After <code>if found is None: return ...</code>, the name holds a plain value.</p>
+{{run:t04_none}}
+<p>The second def never writes <code>Optional</code> for <code>best</code>. A local that is <code>None</code> in one place and a value in another is an Optional.</p>
+
+<h2 id="changing-a-list">Changing a list</h2>
+<p><code>append</code>, <code>xs[i] = v</code> and the other in-place changes work on a list the function made itself.</p>
+{{run:t05_change}}
+<p>A list that came in as a parameter belongs to the caller too. Changing it in place would change what the caller sees, so it is refused. Copy it first with <code>list(xs)</code>.</p>
+{{refuse:t05_change_bad}}
+
+<h2 id="loops">Loops</h2>
+<p>A <code>for</code> loop needs nothing extra. A <code>while</code> loop has to end, and the checker sees that by itself for the two commonest shapes: a count going up to a limit, and a count going down to 0.</p>
+{{run:t06_loops}}
+<p>Any other <code>while</code> loop ends with <code>decreases(measure, proof)</code>, which names a number that gets smaller on every pass. <a href="proofs.html#while-loops">Proofs</a> shows one.</p>
+
+<h2 id="values-in-types">Values in types</h2>
+<p>This is where Pagda goes past ordinary type checkers. A type can mention a value. <code>Vec[A, n]</code> is a list of exactly <code>n</code> items, and <code>dot</code> takes two vectors of the same length.</p>
+{{run:t07_vec}}
+<p>The second <code>match</code> has only one case. The checker knows <code>b</code> has the same length as <code>a</code>, so when <code>a</code> is a <code>Cons</code>, <code>b</code> is one too. Give <code>dot</code> vectors of different lengths and the file is refused:</p>
+{{refuse:t07_vec_bad}}
+
+<h2 id="proofs">Proofs</h2>
+<p>A return type can be a statement. <code>add(n, 0) == n</code> as a type means "a proof that <code>add(n, 0)</code> equals <code>n</code>". The body builds that proof, and a recursive call plays the part of the induction step.</p>
+{{run:t08_proof}}
+<p>An <code>assert</code> at the top level is worked out by the checker before the program runs. A false one is a type error.</p>
+
+<h2 id="asking-for-a-reason">Asking the caller for a reason</h2>
+<p>A def can take a proof as a parameter. <code>at</code> reads <code>xs[i]</code> with no test of its own, because its third parameter is a proof that <code>i</code> is in range. The caller gets that proof from its own test with <code>known(...)</code>.</p>
+{{run:t09_param}}
+<p>A caller with no reason is refused:</p>
+{{refuse:t09_param_bad}}
+
+<h2 id="holes">Holes</h2>
+<p>Write <code>hole()</code> for a part you have not worked out. The checker checks everything else, then says what the hole needs and what is in scope there.</p>
+{{refuse:t10_hole}}
+
+<h2 id="the-outside-world">The outside world</h2>
+<p>A checked file cannot open files or call libraries the checker has not read. A def marked <code>@trusted</code> is the door. The checker reads its annotations and believes them.</p>
+{{check:t11_trusted}}
+<p>Checked files can also import each other: <code>from shapes import Point, width</code>.</p>
+
+<h2 id="where-next">Where next</h2>
+<ul>
+  <li><a href="proofs.html">Proofs</a> goes further into types that state facts.</li>
+  <li><a href="examples.html">Examples</a> has longer programs.</li>
+  <li><a href="reference.html">The reference</a> lists everything a checked file can hold.</li>
+</ul>

@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Proofs in Pagda</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Types that state facts, and Python functions that prove them.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="index.html"><span class="mark" aria-hidden="true">⊢</span>Pagda</a>
+<nav class="nav" aria-label="Site"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html" aria-current="page">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></header>
+<main class="doc"><nav class="toc" aria-label="On this page"><div class="toc-title">On this page</div><a href="#statements-as-types">Statements as types</a><a href="#tests-teach-the-checker">Tests teach the checker</a><a href="#known">Getting the proof of a test</a><a href="#impossible-cases">Impossible cases</a><a href="#types-that-depend-on-arguments">Function types that mention their argument</a><a href="#ready-made-proofs">Ready-made proofs</a><a href="#while-loops">While loops</a><a href="#holes">Working with holes</a><a href="#limits">What proofs cannot reach yet</a></nav><div class="content"><h1>Proofs</h1>
+<p class="intro">In Pagda a type can be a statement, and a value of that type is a proof of it. This page shows how to state a fact and how to prove one, in Python syntax.</p>
+
+<h2 id="statements-as-types">Statements as types</h2>
+<p>In an annotation, <code>a == b</code> is the type of proofs that <code>a</code> equals <code>b</code>. <code>refl()</code> is the proof that a thing equals itself. The checker works both sides out, so <code>refl()</code> proves any equation whose two sides come to the same thing.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t08_proof.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def add(a: Nat, b: Nat) -&gt; Nat:
+    if a == 0:
+        return b
+    return add(a - 1, b) + 1
+
+
+# a fact about add, for every n. The return type is the fact.
+def add_zero(n: Nat) -&gt; add(n, 0) == n:
+    if n == 0:
+        return refl()                      # add(0, 0) is 0 by working it out
+    return cong(suc, add_zero(n - 1))      # the fact for n - 1 gives the fact for n
+
+
+assert add(20, 22) == 42                   # worked out by the checker
+print(add(20, 22), add_zero(7))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">add</span>(a: <span class="t">Nat</span>, b: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    <span class="k">if</span> a == <span class="n">0</span>:
+        <span class="k">return</span> b
+    <span class="k">return</span> add(a - <span class="n">1</span>, b) + <span class="n">1</span>
+
+
+<span class="c"># a fact about add, for every n. The return type is the fact.</span>
+<span class="k">def</span> <span class="f">add_zero</span>(n: <span class="t">Nat</span>) -&gt; add(n, <span class="n">0</span>) == n:
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> refl()                      <span class="c"># add(0, 0) is 0 by working it out</span>
+    <span class="k">return</span> cong(suc, add_zero(n - <span class="n">1</span>))      <span class="c"># the fact for n - 1 gives the fact for n</span>
+
+
+<span class="k">assert</span> add(<span class="n">20</span>, <span class="n">22</span>) == <span class="n">42</span>                   <span class="c"># worked out by the checker</span>
+print(add(<span class="n">20</span>, <span class="n">22</span>), add_zero(<span class="n">7</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t08_proof.py</div><pre>42 Refl()</pre></div>
+</figure>
+<p><code>add_zero</code> has two cases. When <code>n</code> is 0, both sides work out to 0 and <code>refl()</code> is enough. Otherwise the recursive call proves the fact for <code>n - 1</code>, and <code>cong(suc, ...)</code> adds one to both sides of it. The checker also makes sure the recursion ends, which is what makes this a proof for every <code>n</code>.</p>
+<div class="table"><table>
+<thead><tr><th>Write</th><th>To get</th></tr></thead>
+<tbody>
+<tr><td><code>refl()</code></td><td>a proof of <code>x == x</code></td></tr>
+<tr><td><code>sym(p)</code></td><td>from <code>a == b</code>, a proof of <code>b == a</code></td></tr>
+<tr><td><code>trans(p, q)</code></td><td>from <code>a == b</code> and <code>b == c</code>, a proof of <code>a == c</code></td></tr>
+<tr><td><code>cong(f, p)</code></td><td>from <code>a == b</code>, a proof of <code>f(a) == f(b)</code></td></tr>
+<tr><td><code>subst(P, p, x)</code></td><td>from <code>a == b</code> and a <code>P(a)</code>, a <code>P(b)</code></td></tr>
+</tbody></table></div>
+
+<h2 id="tests-teach-the-checker">Tests teach the checker</h2>
+<p>Inside <code>if c:</code> the checker replaces <code>c</code> by <code>True</code> in what is left to prove, and by <code>False</code> in the other branch. So a proof about a function that tests <code>a &lt; b</code> can test <code>a &lt; b</code> itself and finish each branch separately.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_if.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Or[A, B](Data): ...
+
+
+@constructor
+def Left[A, B](a: A) -&gt; Or[A, B]: ...
+
+
+@constructor
+def Right[A, B](b: B) -&gt; Or[A, B]: ...
+
+
+def larger(a: Nat, b: Nat) -&gt; Nat:
+    if a &lt; b:
+        return b
+    return a
+
+
+# larger(a, b) is always one of its two arguments
+def larger_is_one(a: Nat, b: Nat) -&gt; Or[Eq[larger(a, b), a], Eq[larger(a, b), b]]:
+    if a &lt; b:
+        return Right(refl())
+    return Left(refl())
+
+
+print(larger(2, 5), larger_is_one(2, 5), larger_is_one(5, 2))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="f">Or</span>[A, B](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Left</span>[A, B](a: A) -&gt; Or[A, B]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Right</span>[A, B](b: B) -&gt; Or[A, B]: ...
+
+
+<span class="k">def</span> <span class="f">larger</span>(a: <span class="t">Nat</span>, b: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    <span class="k">if</span> a &lt; b:
+        <span class="k">return</span> b
+    <span class="k">return</span> a
+
+
+<span class="c"># larger(a, b) is always one of its two arguments</span>
+<span class="k">def</span> <span class="f">larger_is_one</span>(a: <span class="t">Nat</span>, b: <span class="t">Nat</span>) -&gt; Or[<span class="t">Eq</span>[larger(a, b), a], <span class="t">Eq</span>[larger(a, b), b]]:
+    <span class="k">if</span> a &lt; b:
+        <span class="k">return</span> Right(refl())
+    <span class="k">return</span> Left(refl())
+
+
+print(larger(<span class="n">2</span>, <span class="n">5</span>), larger_is_one(<span class="n">2</span>, <span class="n">5</span>), larger_is_one(<span class="n">5</span>, <span class="n">2</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_if.py</div><pre>5 Right(Refl()) Left(Refl())</pre></div>
+</figure>
+<p><code>Or[A, B]</code> is declared in the file: a proof of <code>A</code> or a proof of <code>B</code>. Inside a type, write <code>Eq[x, y]</code> for the statement <code>x == y</code>.</p>
+
+<h2 id="known">Getting the proof of a test</h2>
+<p>A test also gives a proof you can pass on. Inside <code>if c:</code> or <code>while c:</code>, <code>known(c)</code> is the proof that <code>c</code> is true. In the <code>else</code> part, <code>known(not c)</code> is the proof for the other way.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">t09_param.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def at(xs: list[int], i: Nat, ok: (i &lt; len(xs)) == True) -&gt; int:
+    return xs[i]                      # no test needed: the caller proved it
+
+
+def third_or_zero(xs: list[int]) -&gt; int:
+    if 2 &lt; len(xs):
+        return at(xs, 2, known(2 &lt; len(xs)))
+    return 0
+
+
+print(third_or_zero([7, 8, 9]), third_or_zero([7]))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">at</span>(xs: <span class="t">list</span>[<span class="t">int</span>], i: <span class="t">Nat</span>, ok: (i &lt; len(xs)) == <span class="k">True</span>) -&gt; <span class="t">int</span>:
+    <span class="k">return</span> xs[i]                      <span class="c"># no test needed: the caller proved it</span>
+
+
+<span class="k">def</span> <span class="f">third_or_zero</span>(xs: <span class="t">list</span>[<span class="t">int</span>]) -&gt; <span class="t">int</span>:
+    <span class="k">if</span> <span class="n">2</span> &lt; len(xs):
+        <span class="k">return</span> at(xs, <span class="n">2</span>, known(<span class="n">2</span> &lt; len(xs)))
+    <span class="k">return</span> <span class="n">0</span>
+
+
+print(third_or_zero([<span class="n">7</span>, <span class="n">8</span>, <span class="n">9</span>]), third_or_zero([<span class="n">7</span>]))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t09_param.py</div><pre>9 0</pre></div>
+</figure>
+<p>A parameter whose type is <code>c == True</code> works the other way round: inside the def, the checker treats <code>c</code> as known.</p>
+
+<h2 id="impossible-cases">Impossible cases</h2>
+<p>Some types have no values. <code>Fin[n]</code> is a number below <code>n</code>, so <code>Fin[0]</code> is empty. A <code>match</code> on such a value has nothing to handle, and <code>case _: return unreachable()</code> says so. The checker accepts it only when it can see that no value gets there.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_unreachable.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+class Vec[A, n: Nat](Data): ...
+
+
+@constructor
+def Nil[A]() -&gt; Vec[A, 0]: ...
+
+
+@constructor
+def Cons[A, n: Nat](head: A, tail: Vec[A, n]) -&gt; Vec[A, n + 1]: ...
+
+
+class Fin[n: Nat](Data): ...          # a number below n
+
+
+@constructor
+def FZ[n: Nat]() -&gt; Fin[n + 1]: ...
+
+
+@constructor
+def FS[n: Nat](before: Fin[n]) -&gt; Fin[n + 1]: ...
+
+
+def lookup[A, n: Nat](xs: Vec[A, n], i: Fin[n]) -&gt; A:
+    match xs:
+        case Cons(x, rest):
+            match i:
+                case FZ():
+                    return x
+                case FS(j):
+                    return lookup(rest, j)
+
+
+def nothing_below_zero[A](i: Fin[0]) -&gt; A:
+    match i:
+        case _:
+            return unreachable()
+
+
+v: Vec[str, 3] = Cons(&quot;a&quot;, Cons(&quot;b&quot;, Cons(&quot;c&quot;, Nil())))
+print(lookup(v, FZ()), lookup(v, FS(FS(FZ()))))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">class</span> <span class="t">Vec</span>[A, n: <span class="t">Nat</span>](<span class="t">Data</span>): ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Nil</span>[A]() -&gt; <span class="t">Vec</span>[A, <span class="n">0</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">Cons</span>[A, n: <span class="t">Nat</span>](head: A, tail: <span class="t">Vec</span>[A, n]) -&gt; <span class="t">Vec</span>[A, n + <span class="n">1</span>]: ...
+
+
+<span class="k">class</span> <span class="t">Fin</span>[n: <span class="t">Nat</span>](<span class="t">Data</span>): ...          <span class="c"># a number below n</span>
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">FZ</span>[n: <span class="t">Nat</span>]() -&gt; <span class="t">Fin</span>[n + <span class="n">1</span>]: ...
+
+
+<span class="d">@constructor</span>
+<span class="k">def</span> <span class="f">FS</span>[n: <span class="t">Nat</span>](before: <span class="t">Fin</span>[n]) -&gt; <span class="t">Fin</span>[n + <span class="n">1</span>]: ...
+
+
+<span class="k">def</span> <span class="f">lookup</span>[A, n: <span class="t">Nat</span>](xs: <span class="t">Vec</span>[A, n], i: <span class="t">Fin</span>[n]) -&gt; A:
+    <span class="k">match</span> xs:
+        <span class="k">case</span> Cons(x, rest):
+            <span class="k">match</span> i:
+                <span class="k">case</span> FZ():
+                    <span class="k">return</span> x
+                <span class="k">case</span> FS(j):
+                    <span class="k">return</span> lookup(rest, j)
+
+
+<span class="k">def</span> <span class="f">nothing_below_zero</span>[A](i: <span class="t">Fin</span>[<span class="n">0</span>]) -&gt; A:
+    <span class="k">match</span> i:
+        <span class="k">case</span> _:
+            <span class="k">return</span> unreachable()
+
+
+v: <span class="t">Vec</span>[<span class="t">str</span>, <span class="n">3</span>] = Cons(<span class="s">&quot;a&quot;</span>, Cons(<span class="s">&quot;b&quot;</span>, Cons(<span class="s">&quot;c&quot;</span>, Nil())))
+print(lookup(v, FZ()), lookup(v, FS(FS(FZ()))))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_unreachable.py</div><pre>a c</pre></div>
+</figure>
+<p><code>lookup</code> has no case for an empty vector. An index of type <code>Fin[n]</code> into a <code>Vec[A, n]</code> cannot be out of range, and the checker sees that the missing case cannot happen.</p>
+
+<h2 id="types-that-depend-on-arguments">Function types that mention their argument</h2>
+<p><code>Fn[A, B]</code> is the type of functions from <code>A</code> to <code>B</code>. An argument can be named, and the types after it can then use the name. That is enough to write induction itself as a def:</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_fn.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def induction(P: Fn[Nat, Type], base: P(0), step: Fn[k: Nat, P(k), P(k + 1)], n: Nat) -&gt; P(n):
+    if n == 0:
+        return base
+    return step(n - 1, induction(P, base, step, n - 1))
+
+
+def plus_zero(n: Nat) -&gt; n + 0 == n:
+    return induction(lambda k: Eq[k + 0, k], refl(), lambda k, h: cong(suc, h), n)
+
+
+print(plus_zero(4))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">induction</span>(P: <span class="t">Fn</span>[<span class="t">Nat</span>, <span class="t">Type</span>], base: P(<span class="n">0</span>), step: <span class="t">Fn</span>[k: <span class="t">Nat</span>, P(k), P(k + <span class="n">1</span>)], n: <span class="t">Nat</span>) -&gt; P(n):
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> base
+    <span class="k">return</span> step(n - <span class="n">1</span>, induction(P, base, step, n - <span class="n">1</span>))
+
+
+<span class="k">def</span> <span class="f">plus_zero</span>(n: <span class="t">Nat</span>) -&gt; n + <span class="n">0</span> == n:
+    <span class="k">return</span> induction(<span class="k">lambda</span> k: <span class="t">Eq</span>[k + <span class="n">0</span>, k], refl(), <span class="k">lambda</span> k, h: cong(suc, h), n)
+
+
+print(plus_zero(<span class="n">4</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_fn.py</div><pre>Refl()</pre></div>
+</figure>
+<p>The step takes a number <code>k</code> and a proof of <code>P(k)</code>, and gives a proof of <code>P(k + 1)</code>.</p>
+
+<h2 id="ready-made-proofs">Ready-made proofs</h2>
+<p><code>lemmas</code> is a checked file that ships with Pagda. It holds facts about numbers, <code>&lt;</code> and lists. Import the ones you need by name.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_lemmas.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+from lemmas import plus_comm, len_append
+
+
+def swap(a: Nat, b: Nat) -&gt; a + b == b + a:
+    return plus_comm(a, b)
+
+
+def joined(xs: list[str], ys: list[str]) -&gt; len(xs + ys) == len(xs) + len(ys):
+    return len_append(xs, ys)
+
+
+print(swap(2, 3), joined([&quot;a&quot;], [&quot;b&quot;, &quot;c&quot;]))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">from</span> lemmas <span class="k">import</span> plus_comm, len_append
+
+
+<span class="k">def</span> <span class="f">swap</span>(a: <span class="t">Nat</span>, b: <span class="t">Nat</span>) -&gt; a + b == b + a:
+    <span class="k">return</span> plus_comm(a, b)
+
+
+<span class="k">def</span> <span class="f">joined</span>(xs: <span class="t">list</span>[<span class="t">str</span>], ys: <span class="t">list</span>[<span class="t">str</span>]) -&gt; len(xs + ys) == len(xs) + len(ys):
+    <span class="k">return</span> len_append(xs, ys)
+
+
+print(swap(<span class="n">2</span>, <span class="n">3</span>), joined([<span class="s">&quot;a&quot;</span>], [<span class="s">&quot;b&quot;</span>, <span class="s">&quot;c&quot;</span>]))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_lemmas.py</div><pre>Refl() Refl()</pre></div>
+</figure>
+<div class="table"><table>
+<thead><tr><th>Name</th><th>The fact</th></tr></thead>
+<tbody>
+<tr><td><code>plus_zero</code>, <code>plus_suc</code>, <code>plus_comm</code>, <code>plus_assoc</code></td><td>addition on <code>Nat</code></td></tr>
+<tr><td><code>times_zero</code>, <code>times_one</code></td><td>multiplication on <code>Nat</code></td></tr>
+<tr><td><code>lt_suc</code>, <code>lt_irrefl</code>, <code>lt_asym</code>, <code>lt_trans</code></td><td><code>&lt;</code> on <code>Nat</code></td></tr>
+<tr><td><code>monus_step</code>, <code>down_step</code></td><td>measures for <code>while</code> loops</td></tr>
+<tr><td><code>append_nil</code>, <code>append_assoc</code>, <code>len_append</code></td><td>lists</td></tr>
+<tr><td><code>false_is_not_true</code>, <code>true_is_not_false</code></td><td>the two bools differ</td></tr>
+</tbody></table></div>
+
+<h2 id="while-loops">While loops</h2>
+<p>A <code>while</code> loop outside the two shapes the checker handles by itself ends with <code>decreases(measure, proof)</code>. The measure is a <code>Nat</code> worked out from the loop's variables. The proof shows that the measure at the end of a pass is smaller than it was at the start.</p>
+<figure class="sample is-ok">
+<figcaption><span class="file">p_while.py</span><span class="chip ok">checked</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+from lemmas import down_step
+
+
+def halvings(n: Nat) -&gt; Nat:
+    steps = 0
+    left = n
+    while 0 &lt; left:
+        was = left
+        left = monus(left, 1)
+        steps += 1
+        decreases(left, down_step(was, known(0 &lt; was)))
+    return steps
+
+
+print(halvings(4))
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">from</span> lemmas <span class="k">import</span> down_step
+
+
+<span class="k">def</span> <span class="f">halvings</span>(n: <span class="t">Nat</span>) -&gt; <span class="t">Nat</span>:
+    steps = <span class="n">0</span>
+    left = n
+    <span class="k">while</span> <span class="n">0</span> &lt; left:
+        was = left
+        left = monus(left, <span class="n">1</span>)
+        steps += <span class="n">1</span>
+        decreases(left, down_step(was, known(<span class="n">0</span> &lt; was)))
+    <span class="k">return</span> steps
+
+
+print(halvings(<span class="n">4</span>))
+</code></pre>
+<div class="result"><div class="cmd">$ pagda p_while.py</div><pre>4</pre></div>
+</figure>
+<p>Here the measure is <code>left</code> itself. <code>was</code> remembers its value at the start of the pass, <code>known(0 &lt; was)</code> is the loop's own test, and <code>down_step</code> turns those into the proof.</p>
+
+<h2 id="holes">Working with holes</h2>
+<p>Proofs are written a piece at a time. Put <code>hole()</code> where you are stuck and run the checker. It reports the type the hole needs and the names you can build it from.</p>
+<figure class="sample is-bad">
+<figcaption><span class="file">t10_hole.py</span><span class="chip bad">refused</span><button class="copy" type="button" data-src="from __future__ import annotations
+from dependent import *
+
+
+def plus_zero(n: Nat) -&gt; n + 0 == n:
+    if n == 0:
+        return refl()
+    return cong(suc, hole())
+">Copy</button></figcaption>
+<pre class="code"><code><span class="k">def</span> <span class="f">plus_zero</span>(n: <span class="t">Nat</span>) -&gt; n + <span class="n">0</span> == n:
+    <span class="k">if</span> n == <span class="n">0</span>:
+        <span class="k">return</span> refl()
+    <span class="k">return</span> cong(suc, hole())
+</code></pre>
+<div class="result"><div class="cmd">$ pagda t10_hole.py</div><pre>  File &quot;t10_hole.py&quot;, line 8
+    return cong(suc, hole())
+TypeCheckError: this file has 1 hole, so it was not run.
+line 8: hole() needs a value of type
+  n₁ + 0 ≡ n₁
+with these names to build it from:
+  n₁ : Nat</pre></div>
+</figure>
+<p>Here the hole needs <code>n₁ + 0 ≡ n₁</code>, where <code>n₁</code> is <code>n - 1</code>. That is the fact itself for a smaller number, so the answer is the recursive call <code>plus_zero(n - 1)</code>.</p>
+
+<h2 id="limits">What proofs cannot reach yet</h2>
+<ul>
+  <li>A property of a loop's result. Write the loop as a recursive def to prove something about it.</li>
+  <li>Types of types beyond the first level. A constructor field cannot hold a type.</li>
+  <li>Explicit type arguments at a call. The checker always works them out.</li>
+</ul>
+</div></main>
+<footer class="foot"><div class="wrap">
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<nav aria-label="Footer"><a href="index.html">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html" aria-current="page">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
+</div></footer>
+<script src="site.js"></script>
+</body>
+</html>
