@@ -123,13 +123,13 @@ static void *interp_main(void *arg) {
     int first = 1;
     bool only_check = false;
     if (argc > 1 && strcmp(argv[1], "-c") == 0) {
-        if (argc < 3) { fprintf(stderr, "usage: pyc [file.py | -c code | -] [args...]\n"); exit_code = 2; return NULL; }
+        if (argc < 3) { fprintf(stderr, "usage: pagda [file.py | -c code | -] [args...]\n"); exit_code = 2; return NULL; }
         cmd = argv[2];
         first = 2;
     } else if (argc > 1 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        printf("usage: pyc [file.py | -c code | -] [args...]\n"
-               "       pyc --check file.py   type-check a checked file without running it\n"
-               "       pyc --agda file.py    print the Agda text a checked file is translated to\n"
+        printf("usage: pagda [file.py | -c code | -] [args...]\n"
+               "       pagda --check file.py   type-check a checked file without running it\n"
+               "       pagda --agda file.py    print the Agda text a checked file is translated to\n"
                "With no arguments, starts an interactive prompt.\n");
         return NULL;
     } else if (argc > 2 && (strcmp(argv[1], "--agda") == 0 || strcmp(argv[1], "--check") == 0)) {
@@ -158,7 +158,7 @@ static void *interp_main(void *arg) {
     else if (file && strcmp(file, "-") != 0) {
         FILE *f = fopen(file, "rb");
         if (!f) {
-            fprintf(stderr, "pyc: can't open file '%s': %s\n", file, strerror(errno));
+            fprintf(stderr, "pagda: can't open file '%s': %s\n", file, strerror(errno));
             exit_code = 2;
             return NULL;
         }
@@ -168,7 +168,7 @@ static void *interp_main(void *arg) {
             register_source(file, src);
             if (!compile_source(src, file, MODE_FILE)) exit_code = report_exception();
             else if (!agda_checked) {
-                fprintf(stderr, "pyc: '%s' does not import dependent, so it is not a checked file\n", file);
+                fprintf(stderr, "pagda: '%s' does not import dependent, so it is not a checked file\n", file);
                 exit_code = 1;
             } else printf("%s: no type errors\n", file);
         } else exit_code = run_source(src, file, main_globals(file), MODE_FILE);

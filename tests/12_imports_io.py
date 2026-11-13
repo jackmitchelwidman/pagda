@@ -20,7 +20,7 @@ except ImportError as e: print(type(e).__name__, e)
 try: from helper_mod import nope
 except ImportError as e: print(type(e).__name__)
 import os
-path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "pyc_test_%d.txt" % os.getpid())
+path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "pagda_test_%d.txt" % os.getpid())
 with open(path, "w") as f:
     print(f.write("line one\n"), f.write("second line\nthird\n"), f.closed)
     print("via print", 1, 2, sep="-", file=f)

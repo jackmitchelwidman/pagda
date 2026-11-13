@@ -634,7 +634,7 @@ static Obj *make_sys(void) {
     dict_setc(d, "stderr", file_new(stderr, "<stderr>", false, true, true));
     dict_setc(d, "stdin", file_new(stdin, "<stdin>", true, false, true));
     dict_setc(d, "maxsize", int_new(INT64_MAX));
-    dict_setc(d, "version", str_c("3.13 (pyc, a Python interpreter in C)"));
+    dict_setc(d, "version", str_c("3.13 (Pagda)"));
     dict_setc(d, "version_info", tuple_pack(5, int_new(3), int_new(13), int_new(0), str_c("final"), int_new(0)));
     dict_setc(d, "platform", str_c("linux"));
     dict_setc(d, "byteorder", str_c("little"));

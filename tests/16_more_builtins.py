@@ -1,5 +1,5 @@
 import os, sys
-base = os.path.join(os.environ.get("TMPDIR", "/tmp"), "pyc_t16_%d" % os.getpid())
+base = os.path.join(os.environ.get("TMPDIR", "/tmp"), "pagda_t16_%d" % os.getpid())
 # print follows sys.stdout
 class Collector:
     def __init__(self): self.parts = []

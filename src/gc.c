@@ -46,13 +46,13 @@ void fatal(const char *msg) {
 }
 
 void gc_init(void) {
-    /* PYC_GC_STRESS=n: collect every n allocations and use plain malloc for every
+    /* PAGDA_GC_STRESS=n: collect every n allocations and use plain malloc for every
        object, so memory checkers can see use of a freed object. */
-    const char *s = getenv("PYC_GC_STRESS");
+    const char *s = getenv("PAGDA_GC_STRESS");
     if (s) stress = atoi(s);
-    /* PYC_GC_POISON=n: collect every n allocations with the normal page allocator
+    /* PAGDA_GC_POISON=n: collect every n allocations with the normal page allocator
        and overwrite freed objects, so a use of a freed object fails loudly. */
-    s = getenv("PYC_GC_POISON");
+    s = getenv("PAGDA_GC_POISON");
     if (s) stress_pages = atoi(s);
 }
 

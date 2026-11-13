@@ -192,6 +192,8 @@ typedef struct {
     int nimport_lines;
     Node **import_stmts; int nimport_stmts;   /* `from other_file import ...` statements */
     const char *module;  /* the Agda module this file became */
+    const char *alias;   /* the name importers know that module by: the Python file's name */
+    const char **used_mods; int nused_mods;   /* "import C... as name" for each checked file reached from here */
     Sym *fn;            /* the function whose body is being written */
     jmp_buf *try_jmp;   /* set while translating code that may turn out to be unreachable */
 } T;
@@ -4648,7 +4650,7 @@ static void mkdirs(char *path) {
 
 /* Runs `agda file` in dir. Returns its exit status, or -1 when agda could not be started. */
 static int run_agda(const char *dir, const char *file, const char *commands, char **output) {
-    const char *agda = getenv("PYC_AGDA");
+    const char *agda = getenv("PAGDA_AGDA");
     if (!agda || !*agda) agda = "agda";
     int fd[2];
     if (pipe(fd) < 0) return -1;
@@ -4761,9 +4763,9 @@ static const char *map_report(T *t, const char *text, const char *module, int *f
 static const char *cache_dir(void) {
     const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME");
     char *dir;
-    if (x && *x) dir = af("%s/pyc", x);
-    else if (h && *h) dir = af("%s/.cache/pyc", h);
-    else dir = af("/tmp/pyc-cache-%d", (int)getuid());
+    if (x && *x) dir = af("%s/pagda", x);
+    else if (h && *h) dir = af("%s/.cache/pagda", h);
+    else dir = af("/tmp/pagda-cache-%d", (int)getuid());
     dir = af("%s/%016llx", dir, (unsigned long long)fnv(1469598103934665603ULL, agda_prelude));
     mkdirs(dir);
     return dir;
@@ -4899,7 +4901,20 @@ static T *load_checked(T *t, Str *mod, int line) {
     return mods[at].t;
 }
 
-/* from other import a, b as c */
+static void use_mod(T *t, const char *line) {
+    for (int i = 0; i < t->nused_mods; i++) if (strcmp(t->used_mods[i], line) == 0) return;
+    const char **nu = arena_alloc((size_t)(t->nused_mods + 1) * sizeof *nu);
+    if (t->nused_mods) memcpy(nu, t->used_mods, (size_t)t->nused_mods * sizeof *nu);
+    nu[t->nused_mods++] = line;
+    t->used_mods = nu;
+}
+
+/* from other import a, b as c
+
+   The other file is its own Agda module, imported under the Python file's name:
+   its Point is `other.Point` in this file's Agda text. Every name of the other
+   file is reachable that way, which matters because a type can arrive through a
+   function's result without being imported by name. */
 static void load_imports(T *t) {
     t->imports = "";
     for (int k = 0; k < t->nimport_stmts; k++) {
@@ -4908,10 +4923,19 @@ static void load_imports(T *t) {
         if (s->op) terr(t, s->line, "'from %s import *' is not available in a checked file; name what is imported", mod->s);
         T *sub = load_checked(t, mod, s->line);
         if (sub->unsafe) t->unsafe = true;
-        /* A type from that file can reach this one through a result or a field without
-           being imported by name. Everything there is already defined and checked. */
-        for (int i = 0; i < sub->nsyms; i++) sub->syms[i]->foreign = true;
-        const char *using = NULL;
+        if (!sub->alias) {
+            /* The file is finished, so its names can take their outside form. */
+            sub->alias = mangle(mod->s);
+            for (int i = 0; i < sub->nsyms; i++) {
+                Sym *x = sub->syms[i];
+                if (x->external || x->prelude) continue;
+                x->foreign = true;
+                x->agda = af("%s.%s", sub->alias, x->agda);
+                if (x->ctor) x->ctor = af("%s.%s", sub->alias, x->ctor);
+            }
+        }
+        use_mod(t, af("import %s as %s\n", sub->module, sub->alias));
+        for (int i = 0; i < sub->nused_mods; i++) use_mod(t, sub->used_mods[i]);
         for (int j = 0; j < s->n[0]; j++) {
             Node *a = s->l[0][j];
             Str *nm = AS_STR(a->val), *as = a->val2 ? AS_STR(a->val2) : nm;
@@ -4924,23 +4948,15 @@ static void load_imports(T *t) {
                 if (str_eqc(as, prelude_names[i].py) && imported(t, prelude_names[i].py))
                     terr(t, s->line, "'%s' is already imported from dependent", as->s);
             sym_tys(sub, src);
+            if (src->kind == SK_RECORD) for (int i = 0; i < src->nmethods; i++) sym_tys(sub, src->methods[i]);
             Sym *c = add_sym(t, as, src->kind, src->arity, src->node, 0);
             Str *py = c->py;
             *c = *src;
             c->py = py; c->external = true; c->line = 0; c->rt_ref = false;
-            const char *names = c->agda;
-            if (c->kind == SK_RECORD) {
-                names = af("%s; module %s; %s", c->agda, c->agda, c->ctor);
-                if (c->has_eq) names = af("%s; Eq-%s", names, c->agda);
-                for (int i = 0; i < c->nmethods; i++) {
-                    sym_tys(sub, c->methods[i]);
-                    c->methods[i]->external = true;
-                    names = af("%s; %s", names, c->methods[i]->agda);
-                }
-            }
-            using = using ? af("%s; %s", using, names) : names;
         }
-        t->imports = af("%sopen import %s using (%s)\n", t->imports, sub->module, using ? using : "");
+    }
+    for (int i = 0; i < t->nused_mods; i++) {
+        t->imports = af("%s%s", t->imports, t->used_mods[i]);
         t->nimport_lines++;
     }
 }
@@ -4965,7 +4981,7 @@ static T *check_module(Node *m, const char *filename, bool main) {
     uint64_t h = fnv(fnv(fnv(fnv(1469598103934665603ULL, agda_prelude), options), t->imports), body);
     const char *module = af("C%016llx", (unsigned long long)h);
     t->module = module;
-    const char *header = af("{-# OPTIONS %s #-}\nmodule %s where\nopen import PycPrelude\n%s", options, module, t->imports);
+    const char *header = af("{-# OPTIONS %s #-}\nmodule %s where\nopen import PagdaPrelude\n%s", options, module, t->imports);
     const char *text = af("%s%s", header, body);
     /* The header lines come before the first generated line. */
     int hl = 3 + t->nimport_lines;
@@ -4982,7 +4998,7 @@ static T *check_module(Node *m, const char *filename, bool main) {
     }
 
     const char *dir = cache_dir();
-    const char *prelude_path = af("%s/PycPrelude.agda", dir), *path = af("%s/%s.agda", dir, module);
+    const char *prelude_path = af("%s/PagdaPrelude.agda", dir), *path = af("%s/%s.agda", dir, module);
     const char *ok_path = af("%s/%s.ok", dir, module);
     char *have = read_file(prelude_path);
     if ((!have || strcmp(have, agda_prelude) != 0) && !write_file(prelude_path, agda_prelude))
@@ -4998,7 +5014,7 @@ static T *check_module(Node *m, const char *filename, bool main) {
     if (status < 0) remove(path);
     if (status < 0)
         terr(t, 0, "this file imports dependent, which asks for type checking, and the agda program could not be "
-                   "started. Install Agda, or set PYC_AGDA to its path. The file was not run.");
+                   "started. Install Agda, or set PAGDA_AGDA to its path. The file was not run.");
     if (status == 0 && !t->nholes) {
         /* The .agdai file stays: a file that imports this one is checked against it. */
         write_file(ok_path, "ok\n");

@@ -1,15 +1,17 @@
-# pyc
+# Pagda
 
-A Python 3 interpreter written in C. It reads Python source, compiles it to bytecode, and runs the bytecode on a stack machine.
+Pagda is Python with dependent types. A file that asks for it is type-checked by Agda before it runs, and the types can state facts about values: "this list has 10 items", "this index is inside the list", "`a + b` equals `b + a`". Files that do not ask for it run as ordinary Python.
+
+The `pagda` program is a Python 3 interpreter written in C. It reads Python source, compiles it to bytecode, and runs the bytecode on a stack machine. For a checked file it first translates the file to Agda and has the `agda` program check it.
 
 ## Build and run
 
 ```
-make                 # builds ./pyc
-./pyc script.py      # run a file
-./pyc -c 'print(1)'  # run a string
-./pyc                # interactive prompt
-echo 'print(2)' | ./pyc
+make                 # builds ./pagda
+./pagda script.py      # run a file
+./pagda -c 'print(1)'  # run a string
+./pagda                # interactive prompt
+echo 'print(2)' | ./pagda
 ```
 
 Needs a C compiler (gcc or clang) and make. No other dependencies.
@@ -24,7 +26,7 @@ make test-debug   # same, on a build with address and undefined-behavior checks,
 
 There are three groups:
 
-- `tests/NN_*.py` run under `./pyc` and under `python3`. Output and exit code must match.
+- `tests/NN_*.py` run under `./pagda` and under `python3`. Output and exit code must match.
 - `tests/checked/*.py` are checked files (see below). They must pass the type checker and then match `python3`.
 - `tests/rejected/*.py` must be refused before they run, with the exact message stored in the `.expected` file beside each one.
 
@@ -32,8 +34,8 @@ There are three groups:
 
 Two environment variables help when hunting memory bugs:
 
-- `PYC_GC_STRESS=n` collects every n allocations and allocates each object with plain `malloc`, so AddressSanitizer sees any use of a freed object.
-- `PYC_GC_POISON=n` collects every n allocations with the normal allocator and overwrites freed objects.
+- `PAGDA_GC_STRESS=n` collects every n allocations and allocates each object with plain `malloc`, so AddressSanitizer sees any use of a freed object.
+- `PAGDA_GC_POISON=n` collects every n allocations with the normal allocator and overwrites freed objects.
 
 ## Layout
 
@@ -51,7 +53,7 @@ Two environment variables help when hunting memory bugs:
 | `lib/*.py` | standard-library modules written in Python, embedded in the binary |
 | `lib/dependent.py` | the module a checked file imports; the part that runs |
 | `lib/lemmas.py` | ready-made proofs, itself a checked file |
-| `lib/PycPrelude.agda` | the Agda meaning of each name in `dependent`, embedded in the binary |
+| `lib/PagdaPrelude.agda` | the Agda meaning of each name in `dependent`, embedded in the binary |
 
 ## What works
 
@@ -87,9 +89,9 @@ Two environment variables help when hunting memory bugs:
 
 ## Checked files (dependent types)
 
-A file that imports `dependent` is type-checked before it runs. `pyc` translates the file to Agda, runs the `agda` program on the translation, and runs the Python only if Agda accepts it. Agda is a language whose types can mention values. "A list of length `n`" is a type there, and so is "a proof that `a + b` equals `b + a`".
+A file that imports `dependent` is type-checked before it runs. `pagda` translates the file to Agda, runs the `agda` program on the translation, and runs the Python only if Agda accepts it. Agda is a language whose types can mention values. "A list of length `n`" is a type there, and so is "a proof that `a + b` equals `b + a`".
 
-This needs `agda` on the `PATH` (developed with Agda 2.8.0), or `PYC_AGDA` set to its path. If `agda` cannot be started, a checked file is refused and does not run.
+This needs `agda` on the `PATH` (developed with Agda 2.8.0), or `PAGDA_AGDA` set to its path. If `agda` cannot be started, a checked file is refused and does not run.
 
 ```python
 from __future__ import annotations
@@ -125,12 +127,12 @@ print(head(Nil()))                             # refused: 0 is not n + 1
 ```
 
 ```
-./pyc file.py           # check, then run
-./pyc --check file.py   # check only
-./pyc --agda file.py    # print the Agda text the file turns into
+./pagda file.py           # check, then run
+./pagda --check file.py   # check only
+./pagda --agda file.py    # print the Agda text the file turns into
 ```
 
-A file that passed is remembered in `~/.cache/pyc` (or `$XDG_CACHE_HOME/pyc`), keyed by its translated text, so Agda runs again only when the file changes.
+A file that passed is remembered in `~/.cache/pagda` (or `$XDG_CACHE_HOME/pagda`), keyed by its translated text, so Agda runs again only when the file changes.
 
 The same file runs under `python3` 3.12 or newer with `lib/dependent.py` (and `lib/lemmas.py`, if used) beside it, and prints the same output. There the types are not checked.
 
@@ -286,7 +288,7 @@ Three things are taken on trust: that the def returns a value of the type it say
 - **Callers outside:** an ordinary Python file can import a checked file and call it with anything. Annotations are not checked while the program runs. An outside caller can also keep a list it passed in and change it later.
 - **Deep recursion:** Agda proves that a recursion ends. The interpreter still stops at 1000 nested calls with `RecursionError`. A checked file cannot import `sys`, so raise the limit from an ordinary file that imports the checked one.
 - **Large numbers in asserts:** Agda works an `assert` out itself, and it counts `Nat` values one step at a time in proofs. An assert over large numbers can be slow.
-- **The translation:** the guarantee rests on `src/agda.c` giving each construct the same meaning the interpreter does, and on `lib/dependent.py` matching `lib/PycPrelude.agda`. The tests compare the two on edge values through `assert`, which Agda and Python each work out. `pyc` always loads its built-in `dependent`, so a `dependent.py` in the script's folder is ignored.
+- **The translation:** the guarantee rests on `src/agda.c` giving each construct the same meaning the interpreter does, and on `lib/dependent.py` matching `lib/PagdaPrelude.agda`. The tests compare the two on edge values through `assert`, which Agda and Python each work out. `pagda` always loads its built-in `dependent`, so a `dependent.py` in the script's folder is ignored.
 
 ### Missing from checked files
 

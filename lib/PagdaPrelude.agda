@@ -4,7 +4,7 @@
 -- Names with a subscript digit or a symbol are internal: Python cannot spell them.
 -- Type arguments are marked @0 (erased): they exist for checking only, which lets
 -- them be filled in from the square-bracket names of a checked function.
-module PycPrelude where
+module PagdaPrelude where
 open import Agda.Primitive using (Level; _⊔_)
 open import Agda.Builtin.Nat public using (Nat; zero; suc; _+_; _*_)
 open import Agda.Builtin.Bool public using (Bool; true; false)

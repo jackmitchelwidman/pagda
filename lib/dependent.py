@@ -2,7 +2,7 @@
 
 A file that imports from this module is type-checked before it runs. This module
 is the part that runs afterwards: by then the types have done their work, so
-most things here are small. It runs the same under python3 and pyc.
+most things here are small. It runs the same under python3 and pagda.
 
     from __future__ import annotations
     from dependent import *
@@ -184,7 +184,7 @@ def decreases(measure, proof):
 
 def hole():
     """A gap left to fill in later. The type checker reports what is needed there,
-    and a file with a hole does not run under pyc."""
+    and a file with a hole does not run under pagda."""
     raise AssertionError("hole() was reached: this part of the program is not written yet")
 
 
