@@ -28,7 +28,7 @@
   <dd><p>Yes. It runs under <code>python3</code> 3.12 or newer with <code>dependent.py</code> beside it and prints the same output. There the types are not checked.</p></dd></div>
 
   <div><dt>What can a checked file not hold?</dt>
-  <dd><p>Floats, sets, exceptions, <code>with</code> blocks, file access, assigning to a field of an object, and inheritance between classes. The <a href="reference.html#missing-from-checked-files">reference has the full list</a>. Code that needs these goes in an ordinary Python file, or behind a <code>@trusted</code> def.</p></dd></div>
+  <dd><p>Floats, sets, <code>finally</code> and <code>with</code> blocks, file access, assigning to a field of an object, and inheritance between classes. The <a href="reference.html#missing-from-checked-files">reference has the full list</a>. Code that needs these goes in an ordinary Python file, or behind a <code>@trusted</code> def.</p></dd></div>
 
   <div><dt>Can checked and ordinary files work together?</dt>
   <dd><p>Yes. An ordinary file can import a checked file and call its defs. A checked file reaches ordinary Python through defs marked <code>@trusted</code>, and can import other checked files.</p></dd></div>
@@ -37,12 +37,12 @@
 <h2 id="guarantees">What the check guarantees</h2>
 <dl class="faq">
   <div><dt>What does an accepted file promise?</dt>
-  <dd><p>When a checked file is accepted and run as the main program: every call gets arguments of the annotated types, every <code>match</code> finds a case, every loop and recursion ends, no index, key, <code>pop</code>, division or subtraction fails, no <code>None</code> is used as a value, and every <code>assert</code> holds.</p></dd></div>
+  <dd><p>When a checked file is accepted and run as the main program: every call gets arguments of the annotated types, every <code>match</code> finds a case, every loop and recursion ends, no index, key, <code>pop</code>, division or subtraction fails, no <code>None</code> is used as a value, every <code>assert</code> holds, and the only exceptions are the ones the file raises with <code>raise</code>.</p></dd></div>
 
   <div><dt>Where does the promise stop?</dt>
   <dd><ul>
     <li>An ordinary Python file can call a checked def with any arguments. Annotations are not checked while the program runs.</li>
-    <li>A <code>@trusted</code> def is believed. It promises its result type, the same result for the same arguments, and that it leaves its arguments unchanged.</li>
+    <li>A <code>@trusted</code> def is believed. It promises its result type, the same result for the same arguments, that it leaves its arguments unchanged, and that it does not raise.</li>
     <li>Very deep recursion still stops at Python's limit of 1000 nested calls.</li>
     <li>The promise rests on Pagda's translation giving each construct the same meaning the interpreter does. The tests compare the two on edge values.</li>
   </ul></dd></div>

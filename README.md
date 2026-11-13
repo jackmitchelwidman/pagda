@@ -1,6 +1,6 @@
 # Pagda
 
-Pagda is a subset of Python with dependent types. A file that asks for it is type-checked by Agda before it runs, and the types can state facts about values: "this list has 10 items", "this index is inside the list", "`a + b` equals `b + a`". Such a file can use the part of Python the checker understands: no exceptions, no objects that change, no inheritance. Files that do not ask for checking run as ordinary Python.
+Pagda is a subset of Python with dependent types. A file that asks for it is type-checked by Agda before it runs, and the types can state facts about values: "this list has 10 items", "this index is inside the list", "`a + b` equals `b + a`". Such a file can use the part of Python the checker understands: no objects that change, no inheritance, no floats. Files that do not ask for checking run as ordinary Python.
 
 The `pagda` program is a Python 3 interpreter written in C. It reads Python source, compiles it to bytecode, and runs the bytecode on a stack machine. For a checked file it first translates the file to Agda and has the `agda` program check it.
 
@@ -228,6 +228,37 @@ while k > 0:              # an int counted down to 0
 - **A `for` loop at the top level** may hold `print` statements and further `for` loops.
 - In the Agda text a loop is one expression that folds the body over the items. So `if` inside a loop does not change what the types know (see Conditions), and `case _: return unreachable()` is not available there. A property of a loop's result is proved by writing the loop as a recursive function instead.
 
+### Exceptions
+
+```python
+class ParseError(Exception): ...
+
+def parse(text: str) -> int:
+    if not text:
+        raise ParseError("nothing to parse")
+    ...
+
+def parse_or(text: str, default: int) -> int:
+    try:
+        n = parse(text)
+    except ParseError as e:
+        print("bad input:", e)
+        return default
+    except Exception:
+        return default
+    return n
+```
+
+- **`raise`** takes an exception class and at most a message: `raise ValueError("bad")`. The built-in classes are `Exception`, `ValueError`, `TypeError`, `RuntimeError`, `IndexError`, `ZeroDivisionError`, `ArithmeticError`, `LookupError` and `NotImplementedError`. A file adds its own with `class MyError(Exception): ...`, and one of those can be the base of another.
+- **`try` / `except` / `else`** work as in Python: the first clause that names the exception's class, or a class it is built on, handles it. `except Exception:` and a bare `except:` catch everything. A bare `raise` in an except block raises the same exception again.
+- **In an except block**, `str(e)` and `f"{e}"` give the message, and `print(e)` prints it. The name is gone after the block, as in Python.
+- **A call to a def that can raise stands on its own**: as a statement, as the whole right side of an assignment, or as the whole value of a `return`. `return parse(a) + 1` is refused; write `n = parse(a)` and then `return n + 1`.
+- **A def that calls one that can raise can itself raise**, unless the call is inside a `try` whose clauses include one that catches everything. The checker cannot see that a list of named classes covers all that a called def raises.
+- **An exception that nothing catches** ends the program, as in Python. That is allowed for a call that stands alone at the top level, such as `main()`.
+- **Only `raise` raises.** `xs[i]`, `d[k]`, `//` and the rest still need a reason they cannot fail, and never raise in a checked file.
+- **Not available yet:** `finally`, `raise ... from ...`, an exception with more than one argument, `raise` inside a def that is inside a function, and a loop inside a `try` whose body can raise (move the loop into its own def).
+- In the Agda text a def that can raise gives back either its value or the exception. From a `try` on, the rest of the def is one expression, so an `if` after it does not change what the types know.
+
 ### Classes
 
 - **A class with fields** is written with `@dataclass`. Fields are `name: type` lines, and a field's type can mention the fields before it, so a field can hold a proof about another field. It can have methods, whose first parameter is `self`. `Point(1, 2)`, `Point(x=1, y=2)`, `p.x`, `p.norm()`, `case Point(a, b):` and (when every field can be compared) `==` all work. Fields cannot be assigned to: `replace(p, x=3)` gives a new value with that field changed.
@@ -275,7 +306,7 @@ def file_size(path: str) -> Nat:
     return os.path.getsize(path)
 ```
 
-Three things are taken on trust: that the def returns a value of the type it says, that the same arguments always give the same result, and that it does not change the lists and dicts it is given. Agda treats it as a function, so `assert f(x) == f(x)` passes the check whatever `f` does.
+Four things are taken on trust: that the def returns a value of the type it says, that the same arguments always give the same result, that it does not change the lists and dicts it is given, and that it does not raise. Agda treats it as a function, so `assert f(x) == f(x)` passes the check whatever `f` does.
 
 ### The top level
 
@@ -283,8 +314,8 @@ Three things are taken on trust: that the def returns a value of the type it say
 
 ### What the check covers, and what it does not
 
-- **Covered:** if a checked file is accepted and run as the main program, every call inside it gets arguments of the annotated types, every `match` finds a case, every recursion and loop ends, no index, key, pop, division or subtraction fails, no `None` is used as a value, and every `assert` holds.
-- **`@trusted` defs:** the guarantee holds only as far as each one keeps its three promises.
+- **Covered:** if a checked file is accepted and run as the main program, every call inside it gets arguments of the annotated types, every `match` finds a case, every recursion and loop ends, no index, key, pop, division or subtraction fails, no `None` is used as a value, every `assert` holds, and the only exceptions are the ones the file raises with `raise`.
+- **`@trusted` defs:** the guarantee holds only as far as each one keeps its four promises.
 - **Callers outside:** an ordinary Python file can import a checked file and call it with anything. Annotations are not checked while the program runs. An outside caller can also keep a list it passed in and change it later.
 - **Deep recursion:** Agda proves that a recursion ends. The interpreter still stops at 1000 nested calls with `RecursionError`. A checked file cannot import `sys`, so raise the limit from an ordinary file that imports the checked one.
 - **Large numbers in asserts:** Agda works an `assert` out itself, and it counts `Nat` values one step at a time in proofs. An assert over large numbers can be slow.
@@ -293,7 +324,7 @@ Three things are taken on trust: that the def returns a value of the type it say
 ### Missing from checked files
 
 - Floats, `bytes`, sets, and string methods beyond the ones listed (no `upper`, `lower`, `format`, `int("12")`).
-- Exceptions (`raise`, `try`), `with` blocks, and anything else that touches the outside world except `print`. Use a `@trusted` def.
+- `finally`, `with` blocks, and anything that touches the outside world except `print`. Use a `@trusted` def.
 - Assigning to a field, inheritance between `@dataclass` classes, field defaults, and methods named `__x__` (Python calls those by itself).
 - Changing a list that sits inside another list (`grid[i][j] = v`), and changing a list or dict that might be shared.
 - `list.remove`, `dict.pop`, `del`, slices with a step, tuples of one part, `range` with a step.
@@ -327,6 +358,8 @@ Type errors come from Agda, with positions mapped back to Python lines. Agda wri
 | `Fun₂ A (λ x → B) (λ x y → C)` | `Fn[x: A, y: B, C]` |
 | `f x \| true` | `f(x)` in the branch where its `if` test was true |
 | `Dec₀ c` | `Dec[c]` |
+| `Exc A`, `ok x`, `err e` | the result of a def that can raise: a value, or an exception |
+| `exn "ValueError" "bad"` | `ValueError("bad")` |
 | `Maybe A`, `just x`, `nothing` | `Optional[A]`, `x`, `None` |
 | `⊤`, `tt` | `None` as a return type, and the value a def that returns `None` gives |
 | `natMinus a b p` | `a - b` on Nats |

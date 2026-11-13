@@ -3,7 +3,7 @@
   <div class="hero-text">
     <div class="eyebrow">A subset of Python with dependent types</div>
     <h1>Python that is checked before it runs.</h1>
-    <p class="lede">A Pagda file is a Python file. It is type-checked by Agda before it runs, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero. The price is a smaller language: no exceptions, no objects that change, no inheritance.</p>
+    <p class="lede">A Pagda file is a Python file. It is type-checked by Agda before it runs, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero. The price is a smaller language: no objects that change, no inheritance, no floats.</p>
     <div class="actions">
       <a class="btn primary" href="start.html">Get started</a>
       <a class="btn" href="tour.html">Take the tour</a>
@@ -75,6 +75,7 @@
         <li>Every <code>match</code> finds a case.</li>
         <li>Every loop and recursion ends.</li>
         <li>Every <code>assert</code> holds.</li>
+        <li>The only exceptions are the ones the file raises.</li>
       </ul>
     </div>
     <div>
@@ -82,7 +83,7 @@
       <ul>
         <li>An ordinary Python file can call a checked file with anything.</li>
         <li>A def marked <code>@trusted</code> is believed without being read.</li>
-        <li>Checked files are a subset of Python. Exceptions, changing an object's fields, inheritance, floats, sets and file access are left out.</li>
+        <li>Checked files are a subset of Python. Changing an object's fields, inheritance, floats, sets and file access are left out.</li>
         <li>Pagda is new. There are no numbered releases yet.</li>
       </ul>
       <p style="margin-top:1rem"><a href="faq.html">Read the limits in full</a></p>

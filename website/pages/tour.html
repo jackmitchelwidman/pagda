@@ -1,6 +1,6 @@
 <!-- title: A tour of Pagda | desc: The Pagda language one idea at a time, from an ordinary program to types that mention values. -->
 <h1>A tour of Pagda</h1>
-<p class="intro">Ten short programs. Each was run to build this page, and the panel under it shows what <code>pagda</code> printed. Every file starts with the two lines from <a href="start.html#first-checked-file">Get started</a>; the Copy button includes them.</p>
+<p class="intro">Eleven short programs. Each was run to build this page, and the panel under it shows what <code>pagda</code> printed. Every file starts with the two lines from <a href="start.html#first-checked-file">Get started</a>; the Copy button includes them.</p>
 
 <h2 id="an-ordinary-program">An ordinary program</h2>
 <p>A checked file looks like typed Python. Every def says what it takes and what it gives back. A class with fields is a <code>@dataclass</code>.</p>
@@ -50,6 +50,11 @@
 <h2 id="holes">Holes</h2>
 <p>Write <code>hole()</code> for a part you have not worked out. The checker checks everything else, then says what the hole needs and what is in scope there.</p>
 {{refuse:t10_hole}}
+
+<h2 id="exceptions">Exceptions</h2>
+<p><code>raise</code> and <code>try</code> work as in Python. The checker follows every exception to the clause that catches it, so a top-level <code>assert</code> about code that raises is still worked out before the program runs.</p>
+{{run:t12_exceptions}}
+<p>Two rules are new. A call to a def that can raise stands on its own line, as <code>d = digit(ch)</code> does. And a def that calls one is itself taken to raise unless a clause such as <code>except Exception:</code> catches everything.</p>
 
 <h2 id="the-outside-world">The outside world</h2>
 <p>A checked file cannot open files or call libraries the checker has not read. A def marked <code>@trusted</code> is the door. The checker reads its annotations and believes them.</p>
