@@ -128,6 +128,7 @@ struct Sym {
     bool has_eq;
     bool trusted;                    /* @trusted def: its type is taken on trust */
     bool external;                   /* imported from another checked file */
+    bool foreign;                    /* defined in another checked file, which is already checked */
 };
 
 /* A local name. `term` is the Agda text it stands for. An entry with no name is
@@ -433,7 +434,7 @@ static void emit_record(T *t, Sym *s);
 /* Makes sure Agda has seen what it needs of `s` before the text being written,
    and checks that Python will have defined it by the time it is used. */
 static void need(T *t, Sym *s, int line) {
-    if (s->prelude || s->external) return;
+    if (s->prelude || s->external || s->foreign) return;
     switch (s->kind) {
     case SK_RECORD: if (!s->body_done) emit_record(t, s); break;
     case SK_FUNC:
@@ -4907,6 +4908,9 @@ static void load_imports(T *t) {
         if (s->op) terr(t, s->line, "'from %s import *' is not available in a checked file; name what is imported", mod->s);
         T *sub = load_checked(t, mod, s->line);
         if (sub->unsafe) t->unsafe = true;
+        /* A type from that file can reach this one through a result or a field without
+           being imported by name. Everything there is already defined and checked. */
+        for (int i = 0; i < sub->nsyms; i++) sub->syms[i]->foreign = true;
         const char *using = NULL;
         for (int j = 0; j < s->n[0]; j++) {
             Node *a = s->l[0][j];

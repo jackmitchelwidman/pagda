@@ -1,0 +1,7 @@
+  File "tests/rejected/array_past_end.py", line 5
+    print(zeros().get(10, refl()))
+TypeCheckError: Not in scope:
+  Array10-get
+  at line 5
+    (did you mean 'C4b953e9a5b5b7635.Array10-get'?)
+when scope checking Array10-get
