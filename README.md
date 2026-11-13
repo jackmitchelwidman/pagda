@@ -161,7 +161,7 @@ The same file runs under `python3` 3.12 or newer with `lib/dependent.py` (and `l
 `xs[i]` fails when `i` is past the end, `d[k]` when the key is missing, and `//` and `%` when the divisor is 0. Agda has no failing, so each of these needs a proof that it is fine. The checker finds the proof by itself in three cases:
 
 - the code is under an `if` that tests the condition, written the same way: `if i < len(xs):`, `if k in d:`, `if b != 0:`;
-- the loop is `for i in range(len(xs)):` and the body reads `xs[i]`;
+- the loop is `for i in range(len(xs)):` (a statement, not a comprehension) and the body reads `xs[i]`;
 - Agda can work the condition out, as in `[1, 2, 3][1]` or `n // 2`.
 
 Otherwise the line is refused with a message that says which condition is missing. One case needs care: inside a loop that also changes `xs` (with `xs[i] = v` or `append`), put `if i < len(xs):` around `xs[i]`.

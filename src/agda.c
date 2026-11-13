@@ -644,6 +644,15 @@ static Sym *field_of(Sym *rec, Str *name);
 static Sym *method_of(T *t, Sym *rec, Str *name);
 static Ty *ty_of(T *t, Node *n);
 
+static bool ty_has_int(Ty *ty) {
+    if (!ty) return false;
+    if (ty->k == TK_INT) return true;
+    if (ty->k == TK_LIST) return ty_has_int(ty->a);
+    if (ty->k == TK_DICT) return ty_has_int(ty->a) || ty_has_int(ty->b);
+    if (ty->k == TK_TUPLE) for (int i = 0; i < ty->n; i++) if (ty_has_int(ty->items[i])) return true;
+    return false;
+}
+
 /* The type of the items that iterating over `n` gives. */
 static Ty *iter_elem(T *t, Node *n) {
     if (n->kind == E_CALL) {
@@ -740,7 +749,15 @@ static Ty *ty_of(T *t, Node *n) {
         for (int i = 0; i < n->n[0]; i++) items[i] = ty_of(t, n->l[0][i]);
         return ty_tuple(items, n->n[0]);
     }
-    case E_LIST: return mk_ty(TK_LIST, n->n[0] ? ty_of(t, n->l[0][0]) : NULL, NULL);
+    case E_LIST: {
+        /* [3, -1] is a list of ints: one int among the items makes them all ints */
+        Ty *elem = n->n[0] ? ty_of(t, n->l[0][0]) : NULL;
+        for (int i = 1; i < n->n[0] && !ty_has_int(elem); i++) {
+            Ty *e = ty_of(t, n->l[0][i]);
+            if (ty_has_int(e)) elem = e;
+        }
+        return mk_ty(TK_LIST, elem, NULL);
+    }
     case E_LISTCOMP: return mk_ty(TK_LIST, NULL, NULL);
     case E_DICT:
         return mk_ty(TK_DICT, n->n[0] && n->l[0][0] ? ty_of(t, n->l[0][0]) : NULL, n->n[0] ? ty_of(t, n->l[1][0]) : NULL);
@@ -996,15 +1013,6 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
     case OP_POW: return af("(powNat %s %s)", a, b);
     default: terr(t, n->line, "this operator is not available in a checked file; Nat has + * // %% and **");
     }
-}
-
-static bool ty_has_int(Ty *ty) {
-    if (!ty) return false;
-    if (ty->k == TK_INT) return true;
-    if (ty->k == TK_LIST) return ty_has_int(ty->a);
-    if (ty->k == TK_DICT) return ty_has_int(ty->a) || ty_has_int(ty->b);
-    if (ty->k == TK_TUPLE) for (int i = 0; i < ty->n; i++) if (ty_has_int(ty->items[i])) return true;
-    return false;
 }
 
 /* The type to translate both sides of `x == y` at: when one side is known to hold
@@ -1432,6 +1440,7 @@ static const char *EW(T *t, Node *n, Ty *want) {
     }
     case E_LIST: {
         int c = n->n[0];
+        if (wk != TK_LIST) { Ty *own = ty_of(t, n); if (ty_has_int(own)) { want = own; wk = TK_LIST; } }
         const char **parts = arena_alloc((size_t)(c + 1) * sizeof(char *));
         for (int i = 0; i < c; i++) {
             if (n->l[0][i]->kind == E_STARRED) terr(t, n->line, "* is not available inside a list in a checked file; use +");
