@@ -144,6 +144,7 @@ struct Var {
     bool selfref;        /* a def inside a function, while its own body is being written */
     const char *wide;    /* after `is not None`: the value as it was, still possibly None, for the loop state */
     int depth, tp, id;
+    int loop_level;      /* how many loops and comprehensions were open where the name was bound */
     Ty *ty;
     const char *fact; bool fpol;
     int fid;             /* fact from an `if` written as a with: which one, counted from 1 */
@@ -160,6 +161,7 @@ typedef struct {
     Var *env;
     bool in_type, executing;
     int lambda_depth, noleak;
+    int loop_level;                       /* loops and comprehensions open at this point */
     int printing;                         /* inside the arguments of print: the value is only shown */
     Leak *leaks;
     Ty *ret_ty;                           /* what the function being written returns */
@@ -472,6 +474,10 @@ static Ref lookup(T *t, Str *name, int line) {
                 terr(t, line, "'%s' was the variable of a for loop that has ended. Inside the loop, give its value to "
                               "another name to use it afterwards.", name->s);
             if (v->tp >= 0 && t->c.tp_used) t->c.tp_used[v->tp] = true;
+            if (t->c.lambda_depth > v->depth && v->loop_level > 0 && !t->c.in_type)
+                terr(t, line, "a lambda or inner def here uses '%s', which the loop around it sets on every pass. In Python "
+                              "the function would see whatever value the name has when the function is called, not the "
+                              "value it had when the function was made. Pass the value in as an argument instead.", name->s);
             if (t->c.lambda_depth > v->depth) v->captured = true;
             r.v = v;
             return r;
@@ -505,6 +511,7 @@ static void bind(T *t, Str *py, const char *term, bool split, bool nat, int line
     Var *v = arena_alloc(sizeof(Var));
     v->py = py; v->term = term; v->split = split; v->nat = nat; v->depth = t->c.lambda_depth; v->tp = -1;
     v->id = ++t->next_id;
+    v->loop_level = t->c.loop_level;
     if (nat) v->ty = &ty_nat;
     v->next = t->c.env;
     t->c.env = v;
@@ -1075,6 +1082,8 @@ static const char *div_proof(T *t, const char *b, bool is_int, int line) {
 }
 
 static const char *maybe_type(T *t, Node *inner, int line);
+static bool key_ty(Ty *ty);
+__attribute__((noreturn)) static void bad_key(T *t, int line);
 
 /* The proof for `a - b` on Nats that b is not larger than a: a test in scope
    (`if b <= a:`, or `if a > 0:` for a - 1), or refl when Agda can work it out. */
@@ -1342,7 +1351,7 @@ static const char *comp_expr(T *t, Node *n, Ty *want_elem, int gi) {
     Ty *elem = iter_elem(t, g->b);
     const char *iter = EI(t, g->b);
     Var *saved = t->c.env;
-    t->c.lambda_depth++;
+    t->c.loop_level++;
     const char *pat = target_pat(t, g->a, elem);
     const char *conds = NULL;
     for (int i = 0; i < g->n[0]; i++) {
@@ -1351,7 +1360,7 @@ static const char *comp_expr(T *t, Node *n, Ty *want_elem, int gi) {
     }
     const char *inner = comp_expr(t, n, want_elem, gi + 1);
     if (conds) inner = af("(if %s then %s else [])", conds, inner);
-    t->c.lambda_depth--;
+    t->c.loop_level--;
     t->c.env = saved;
     return af("(concatMap (\xCE\xBB { %s \xE2\x86\x92 %s }) %s)", pat, inner, iter);
 }
@@ -1691,6 +1700,21 @@ static const char *index_expr(T *t, Node *n) {
     }
 }
 
+/* A dict key has to be a value Python can hash and that never changes: a number,
+   a bool, a string, or a tuple of those. */
+static bool key_ty(Ty *ty) {
+    switch (tk(ty)) {
+    case TK_NAT: case TK_INT: case TK_BOOL: case TK_STR: return true;
+    case TK_TUPLE: for (int i = 0; i < ty->n; i++) if (!key_ty(ty->items[i])) return false; return true;
+    default: return false;
+    }
+}
+
+__attribute__((noreturn)) static void bad_key(T *t, int line) {
+    terr(t, line, "the keys of a dict in a checked file are Nat, int, bool, str, or tuples of those. "
+                  "Python cannot use a list, a dict or a @dataclass value as a key, and the checker has to know the key type.");
+}
+
 /* Optional[T], or T | None. In Python a value of this type is None or a T, and
    nothing tells "None" from "a None inside". So T has to be a type that the
    checker can see never holds None itself. */
@@ -1739,6 +1763,7 @@ static const char *subscript_expr(T *t, Node *n) {
     if (sym_is(s, "list")) return af("(List %s)", tr_type(t, args[0]));
     if (sym_is(s, "Optional")) return maybe_type(t, args[0], n->line);
     if (sym_is(s, "dict")) {
+        if (!key_ty(ty_ann(t, args[0], NULL, NULL))) bad_key(t, n->line);
         const char *k = tr_type(t, args[0]);
         return af("(Dict %s %s)", k, tr_type(t, args[1]));
     }
@@ -1910,6 +1935,7 @@ static const char *EW(T *t, Node *n, Ty *want) {
         const char **parts = arena_alloc((size_t)(c + 1) * sizeof(char *));
         for (int i = 0; i < c; i++) {
             if (!n->l[0][i]) terr(t, n->line, "** is not available inside a dict in a checked file");
+            if (!key_ty(wk == TK_DICT && want->a ? want->a : ty_of(t, n->l[0][i]))) bad_key(t, n->l[0][i]->line);
             const char *k = EW(t, n->l[0][i], wk == TK_DICT ? want->a : NULL);
             parts[i] = af("(%s , %s)", k, EW(t, n->l[1][i], wk == TK_DICT ? want->b : NULL));
         }
@@ -2314,7 +2340,14 @@ static const char *method_call(T *t, Node *n) {
         if (argc != 1 && argc != 2) terr(t, n->line, "d.get takes the key, and optionally a value to give back when the key is missing");
         const char *d = ER(t, recv, NULL);
         const char *k = EW(t, n->l[0][0], rt->a);
-        if (argc == 1) return af("(dfind %s %s)", d, k);   /* None when the key is missing */
+        if (argc == 1) {
+            /* None when the key is missing. If a value could be None too, Python could not
+               tell the two apart, so the value type has to be one that is never None. */
+            if (!rt->b || rt->b->k == TK_OPT || rt->b->k == TK_NONE)
+                terr(t, n->line, "d.get(key) gives None for a missing key, so it is available when the checker knows the "
+                                 "dict's values are never None. Use d.get(key, default), or 'if key in d:' and d[key].");
+            return af("(dfind %s %s)", d, k);
+        }
         return af("(dget %s %s %s)", d, k, EW(t, n->l[0][1], rt->b));
     }
     if (tk(rt) == TK_DICT && (str_eqc(m, "items") || str_eqc(m, "keys") || str_eqc(m, "values")))
@@ -2795,6 +2828,9 @@ static const char *mutation(T *t, Node *s, Var **var) {
     Var *v = find_var(t, name);
     if (!v || v->erased || v->dead)
         terr(t, s->line, "'%s' is not a local variable of this function, so it cannot be changed in place", name->s);
+    if (t->c.lambda_depth > v->depth)
+        terr(t, s->line, "'%s' belongs to the function around this def, and a def inside cannot change it in place. "
+                         "Return the new value and let the outer function keep it.", name->s);
     int k = tk(v->ty);
     if (k != TK_LIST && k != TK_DICT)
         terr(t, s->line, "the checker does not know that '%s' is a list or a dict. Give it a type annotation where it "
@@ -2911,6 +2947,9 @@ static const char *pop_parts(T *t, Node *s, Var **list, const char **shorter) {
     Var *v = find_var(t, AS_STR(c->a->a->val));
     if (!v || v->erased || v->dead || tk(v->ty) != TK_LIST)
         terr(t, s->line, "pop is available on a local list whose type the checker knows");
+    if (t->c.lambda_depth > v->depth)
+        terr(t, s->line, "'%s' belongs to the function around this def, and a def inside cannot change it in place. "
+                         "Return the new value and let the outer function keep it.", v->py->s);
     if (!is_fresh(t, v))
         terr(t, s->line, "'%s' may be shared here: it is a parameter, or it came from a call, or it was given another "
                          "name, passed on or put inside another value. A shared list or dict cannot be changed in place, "
@@ -3202,6 +3241,7 @@ static const char *effect_stmt(T *t, Node *s) {
     Node *c = s->a;
     const char *text = NULL;
     t->c.printing++;
+    t->c.noleak++;
     for (int j = c->n[0] - 1; j >= 0; j--) {
         Node *a = c->l[0][j];
         const char *one;
@@ -3214,6 +3254,7 @@ static const char *effect_stmt(T *t, Node *s) {
         else one = E(t, a);
         text = text ? af("(also %s %s)", one, text) : one;
     }
+    t->c.noleak--;
     t->c.printing--;
     return text;
 }
@@ -3704,6 +3745,7 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
     tl.entry = t->c.leaks;
     const char **names = arena_alloc((size_t)(L->n + 1) * sizeof(char *));
     const char **proofs = arena_alloc((size_t)(L->n + 1) * sizeof(char *));
+    t->c.loop_level++;
     for (int i = 0; i < L->n; i++) {
         names[i] = fresh(t, L->carried[i]->s);
         if (L->tracked[i]) proofs[i] = fresh(t, "e");
@@ -3785,6 +3827,7 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
     Leak *entry = t->c.leaks;
     sx(t, k_push(body, nb, NULL), &tl, s->line);
     o_put(t->cur, s->line, "  }))\n");
+    t->c.loop_level--;
     t->c.leaks = entry;
     for (Leak *l = tl.seen; l; l = l->next) {
         Leak *c = arena_alloc(sizeof(Leak));
@@ -4277,6 +4320,8 @@ static void declare_record(T *t, Node *cls) {
         if (st->kind == S_ANNASSIGN && st->a->kind == E_NAME) {
             Str *fname = AS_STR(st->a->val);
             if (st->b) terr(t, st->line, "a field with a default value is not available in a checked file");
+            if (fname->len >= 2 && fname->s[0] == '_' && fname->s[1] == '_')
+                terr(t, st->line, "a field whose name starts with two underscores is not available in a checked file");
             for (int j = 0; j < r->nfields; j++)
                 if (str_eq(r->fields[j]->py, fname)) terr(t, st->line, "the field '%s' is declared twice", fname->s);
             Sym *f = arena_alloc(sizeof(Sym));
@@ -4285,6 +4330,10 @@ static void declare_record(T *t, Node *cls) {
         } else if (st->kind == S_DEF) {
             Str *mname = AS_STR(st->val);
             if (st->n[1]) terr(t, st->line, "decorators on a method are not available in a checked file");
+            if (mname->len >= 2 && mname->s[0] == '_' && mname->s[1] == '_')
+                terr(t, st->line, "a method whose name starts with two underscores is not available in a checked file. "
+                                  "Python calls such methods by itself (for ==, printing, making the object), and the "
+                                  "checker would not know.");
             for (int j = 0; j < r->nfields; j++)
                 if (str_eq(r->fields[j]->py, mname)) terr(t, st->line, "'%s' is already a field of this class", mname->s);
             for (int j = 0; j < r->nmethods; j++)
@@ -4417,6 +4466,13 @@ static void top_for(T *t, Node *s, const char *pre, const char *post) {
     Ty *elem = iter_elem(t, s->b);
     const char *iter = EI(t, s->b);
     Var *saved = t->c.env;
+    Names tg = {0};
+    target_names(&tg, s->a);
+    for (int i = 0; i < tg.n; i++)
+        if (find_sym(t, tg.v[i]))
+            terr(t, s->line, "'%s' is also a name defined at the top level of this file, and this loop would give it a "
+                             "new value. Use another name for the loop variable.", tg.v[i]->s);
+    t->c.loop_level++;
     const char *pat = target_pat(t, s->a, elem);
     pre = af("%s(concatMap (\xCE\xBB { %s \xE2\x86\x92 ", pre, pat);
     post = af(" }) %s)%s", iter, post);
@@ -4429,6 +4485,7 @@ static void top_for(T *t, Node *s, const char *pre, const char *post) {
             terr(t, b->line, "a for loop at the top level of a checked file holds print statements and other for loops. "
                              "Put other work in a function.");
     }
+    t->c.loop_level--;
     t->c.env = saved;
 }
 

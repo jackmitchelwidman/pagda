@@ -1,0 +1,3 @@
+  File "tests/rejected/get_none_value.py", line 5
+    v = d.get("a")
+TypeCheckError: d.get(key) gives None for a missing key, so it is available when the checker knows the dict's values are never None. Use d.get(key, default), or 'if key in d:' and d[key].

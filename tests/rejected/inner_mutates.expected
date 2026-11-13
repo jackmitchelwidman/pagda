@@ -1,0 +1,3 @@
+  File "tests/rejected/inner_mutates.py", line 7
+    xs.append(x)
+TypeCheckError: 'xs' belongs to the function around this def, and a def inside cannot change it in place. Return the new value and let the outer function keep it.

@@ -1,0 +1,3 @@
+  File "tests/rejected/dunder_eq.py", line 8
+    def __eq__(self, other: P) -> bool:
+TypeCheckError: a method whose name starts with two underscores is not available in a checked file. Python calls such methods by itself (for ==, printing, making the object), and the checker would not know.
