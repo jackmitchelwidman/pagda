@@ -203,12 +203,12 @@ def page(name, title, desc, body):
         if name != "index" else f'<main class="home">{body}</main>'
     return f"""<header class="top"><div class="wrap">
 <a class="brand" href="index.html"><span class="mark" aria-hidden="true">⊢</span>Pagda</a>
-<nav class="nav" aria-label="Site">{nav}</nav>
+<nav class="nav" aria-label="Site">{nav}<a href="https://github.com/jackmitchelwidman/pagda">GitHub</a></nav>
 </div></header>
 {main}
 <footer class="foot"><div class="wrap">
 <div><span class="mark" aria-hidden="true">⊢</span> Pagda. A subset of Python with dependent types.</div>
-<nav aria-label="Footer">{nav}</nav>
+<nav aria-label="Footer">{nav}<a href="https://github.com/jackmitchelwidman/pagda">GitHub</a></nav>
 </div></footer>
 <script src="site.js"></script>"""
 

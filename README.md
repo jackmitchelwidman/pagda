@@ -4,9 +4,13 @@ Pagda is a subset of Python with dependent types. A file that asks for it is typ
 
 The `pagda` program is a Python 3 interpreter written in C. It reads Python source, compiles it to bytecode, and runs the bytecode on a stack machine. For a checked file it first translates the file to Agda and has the `agda` program check it.
 
+Website: [pagda.org](https://pagda.org). Licence: MIT, see `LICENSE`.
+
 ## Build and run
 
 ```
+git clone https://github.com/jackmitchelwidman/pagda
+cd pagda
 make                 # builds ./pagda
 ./pagda script.py      # run a file
 ./pagda -c 'print(1)'  # run a string

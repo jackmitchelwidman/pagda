@@ -84,7 +84,7 @@
         <li>An ordinary Python file can call a checked file with anything.</li>
         <li>A def marked <code>@trusted</code> is believed without being read.</li>
         <li>Checked files are a subset of Python. Changing an object's fields, inheritance, floats, sets and file access are left out.</li>
-        <li>Pagda is new. There are no numbered releases yet.</li>
+        <li>Pagda is new. There are no numbered releases yet. The source is open, under the MIT licence.</li>
       </ul>
       <p style="margin-top:1rem"><a href="faq.html">Read the limits in full</a></p>
     </div>
@@ -96,7 +96,9 @@
     <h2>Try it</h2>
     <p>Pagda is built from source with a C compiler and <code>make</code>. Checking needs Agda 2.8.0.</p>
   </div>
-  <pre class="code plain"><code>make                      # builds ./pagda
+  <pre class="code plain"><code>git clone https://github.com/jackmitchelwidman/pagda
+cd pagda
+make                      # builds ./pagda
 ./pagda hello.py          # check, then run
 ./pagda --check hello.py  # check only</code></pre>
   <p style="margin-top:1.2rem"><a class="btn primary" href="start.html">Get started</a></p>
