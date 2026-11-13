@@ -18,7 +18,9 @@ most things here are small. It runs the same under python3 and pyc.
 
 __all__ = ["Type", "Nat", "Data", "constructor", "Callable", "Eq", "Refl", "refl", "suc", "pred", "monus",
            "concat", "sym", "trans", "cong", "subst", "Empty", "absurd", "unreachable", "Fn", "Dec", "Yes", "No",
-           "decide", "to_nat", "known", "decreases", "hole", "dataclass", "trusted"]
+           "decide", "to_nat", "known", "decreases", "hole", "dataclass", "trusted", "Optional"]
+
+from typing import Optional
 
 from dataclasses import dataclass
 
@@ -48,11 +50,15 @@ class Data:
     fields are listed in __match_args__."""
     __match_args__ = ()
 
-    def __init__(self, *args):
+    def __init__(self, *args, **named):
         names = type(self).__match_args__
-        if len(args) != len(names):
-            raise TypeError(f"{type(self).__name__}() takes {len(names)} arguments but {len(args)} were given")
+        if len(args) + len(named) != len(names):
+            raise TypeError(f"{type(self).__name__}() takes {len(names)} arguments but {len(args) + len(named)} were given")
         for name, value in zip(names, args):
+            setattr(self, name, value)
+        for name, value in named.items():
+            if name not in names[len(args):]:
+                raise TypeError(f"{type(self).__name__}() got an unexpected keyword argument '{name}'")
             setattr(self, name, value)
 
     def __repr__(self):

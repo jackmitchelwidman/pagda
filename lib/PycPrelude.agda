@@ -14,6 +14,7 @@ open import Agda.Builtin.Int public using (Int; pos; negsuc)
 open import Agda.Builtin.List public using (List; []; _∷_)
 open import Agda.Builtin.Sigma public using (Σ; _,_; fst; snd)
 open import Agda.Builtin.Unit public using (⊤; tt)
+open import Agda.Builtin.Maybe public using (Maybe; just; nothing)
 import Agda.Builtin.Nat as N
 import Agda.Builtin.String as S
 import Agda.Builtin.Int as I
@@ -425,3 +426,41 @@ whileFuel (suc f) c m s₀ body p with c s₀ in eq
 whileDo : ∀ {r s} {R : Set r} {S : Set s} (c : S → Bool) (m : S → Nat) (s₀ : S)
           → ((s : S) → c s ≡ true → WStep R S m s) → Out R S
 whileDo c m s₀ body = whileFuel (suc (m s₀)) c m s₀ body (lt-suc (m s₀))
+
+-- ---------------------------------------------------------------------------
+-- Optional[A]: nothing is None, just x is x.
+isNone : ∀ {a} {@0 A : Set a} → Maybe A → Bool
+isNone nothing = true
+isNone (just _) = false
+instance
+  EqMaybe : {A : Set} {{_ : Eq₀ A}} → Eq₀ (Maybe A)
+  EqMaybe = record { _==_ = λ { nothing nothing → true ; (just a) (just b) → a == b ; _ _ → false } }
+findKey : {K V : Set} {{_ : Eq₀ K}} → K → List (K × V) → Maybe V
+findKey k [] = nothing
+findKey k ((k′ , v) ∷ r) with k == k′
+... | true = just v
+... | false = findKey k r
+dfind : {K V : Set} {{_ : Eq₀ K}} → Dict K V → K → Maybe V
+dfind d k = findKey k (items d)
+
+-- A statement whose value is not used: a call, or the arguments of print. The
+-- value is still type-checked.
+ignore : ∀ {a} {@0 A : Set a} → A → ⊤
+ignore _ = tt
+also : ∀ {a b} {@0 A : Set a} {@0 B : Set b} → A → B → ⊤
+also _ _ = tt
+-- The text of a value that is only ever printed. What print writes is not part
+-- of what the checker reasons about, so the text itself is left out.
+shown : ∀ {a} {@0 A : Set a} → A → String
+shown _ = ""
+showBool : Bool → String
+showBool true = "True"
+showBool false = "False"
+
+-- Other tests that rule out a zero divisor.
+ltNotZero : {n : Nat} → (0 < n) ≡ true → (n == 0) ≡ false
+ltNotZero {suc n} p = refl
+posNotZero : {b : Int} → (pos 0 <ᵢ b) ≡ true → (b == pos 0) ≡ false
+posNotZero {pos (suc n)} p = refl
+negNotZero : {b : Int} → (b <ᵢ pos 0) ≡ true → (b == pos 0) ≡ false
+negNotZero {negsuc n} p = refl

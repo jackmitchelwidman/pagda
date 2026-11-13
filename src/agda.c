@@ -98,11 +98,11 @@ static void o_put(Out *o, int pyline, const char *s) {
 /* ---------- data structures ---------- */
 
 enum { SK_FUNC, SK_DATA, SK_CTOR, SK_VALUE, SK_TYPE, SK_SPECIAL, SK_RECORD, SK_FIELD };
-enum { TK_NAT = 1, TK_INT, TK_BOOL, TK_STR, TK_LIST, TK_TUPLE, TK_DICT, TK_FUN, TK_REC, TK_OTHER };
+enum { TK_NAT = 1, TK_INT, TK_BOOL, TK_STR, TK_LIST, TK_TUPLE, TK_DICT, TK_FUN, TK_REC, TK_OTHER, TK_NONE, TK_OPT };
 
 typedef struct Sym Sym;
 typedef struct Ty Ty;
-/* What is known of a type: list (a = items), dict (a = keys, b = values), tuple
+/* What is known of a type: list (a = items), Optional (a = the type when not None), dict (a = keys, b = values), tuple
    (items), function (items = arguments, a = result), class or Data family (sym). */
 struct Ty { int k; Ty *a, *b; Ty **items; int n; Sym *sym; };
 
@@ -156,6 +156,7 @@ typedef struct {
     Var *env;
     bool in_type, executing;
     int lambda_depth, noleak;
+    int printing;                         /* inside the arguments of print: the value is only shown */
     Leak *leaks;
     Ty *ret_ty;                           /* what the function being written returns */
     Str **ints; int nints;                /* locals that hold an int somewhere in the function */
@@ -199,6 +200,7 @@ static const struct { const char *py, *agda; int kind, arity; } prelude_names[] 
     {"absurd", "absurd", SK_FUNC, 1}, {"concat", "concat", SK_FUNC, 2}, {"unreachable", NULL, SK_SPECIAL, 0},
     {"to_nat", "toNat", SK_FUNC, 1}, {"known", NULL, SK_SPECIAL, 0}, {"decreases", NULL, SK_SPECIAL, 0},
     {"hole", NULL, SK_SPECIAL, 0}, {"dataclass", NULL, SK_SPECIAL, 0}, {"trusted", NULL, SK_SPECIAL, 0},
+    {"Optional", NULL, SK_TYPE, 1},
 };
 /* Type names that need no import. */
 static const struct { const char *py, *agda; int arity; } builtin_types[] = {
@@ -223,7 +225,8 @@ static const char *const reserved[] = {
     "allL", "insertBy", "sortBy", "sortedNat", "sortedInt", "strLen", "Dict", "mkDict", "items", "hasKey", "has", "getOr",
     "dget", "lookupKey", "dindex", "putKey", "dset", "dictOf", "dictFrom", "dlen", "dkeys", "dvalues", "Step", "next",
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
-    "whileFuel", "whileDo", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
+    "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
+    "findKey", "dfind", "ltNotZero", "posNotZero", "negNotZero", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
     "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
 static const char *const sub_digit[] = {"\xE2\x82\x80", "\xE2\x82\x81", "\xE2\x82\x82", "\xE2\x82\x83", "\xE2\x82\x84",
@@ -443,7 +446,7 @@ static void need(T *t, Sym *s, int line) {
 
 typedef struct { Var *v; Sym *s; } Ref;
 static Ty ty_nat = {TK_NAT, 0, 0, 0, 0, 0}, ty_int = {TK_INT, 0, 0, 0, 0, 0}, ty_bool = {TK_BOOL, 0, 0, 0, 0, 0},
-          ty_str = {TK_STR, 0, 0, 0, 0, 0};
+          ty_str = {TK_STR, 0, 0, 0, 0, 0}, ty_none = {TK_NONE, 0, 0, 0, 0, 0};
 
 static Ref lookup(T *t, Str *name, int line) {
     Ref r = {0};
@@ -561,20 +564,45 @@ static bool is_tparam_of(Node *def, Str *nm) {
     return false;
 }
 
+/* What the square-bracket names of the def being called stand for at this call,
+   when the type wanted from the call tells: MkPair("a", 1) where a Pair[str, int]
+   is wanted makes B an int, so the 1 is written as an int. */
+static struct { Str *name; Ty *ty; } tmap[16];
+static int ntmap;
+
 /* The type an annotation stands for. `def` and `cls` are the def and class whose
    square-bracket names are in scope; with neither, the current environment is. */
 static Ty *ty_ann(T *t, Node *ann, Node *def, Node *cls) {
     if (!ann) return NULL;
+    if (ann->kind == E_CONST && ann->val == Py_None) return &ty_none;
+    if (ann->kind == E_BINOP && ann->op == OP_OR) {   /* T | None */
+        bool ln = ann->a->kind == E_CONST && ann->a->val == Py_None, rn = ann->b->kind == E_CONST && ann->b->val == Py_None;
+        if (ln == rn) return NULL;
+        Ty *inner = ty_ann(t, ln ? ann->b : ann->a, def, cls);
+        return inner && inner->k != TK_OPT && inner->k != TK_NONE ? mk_ty(TK_OPT, inner, NULL) : NULL;
+    }
     Node *head = ann->kind == E_SUBSCR ? ann->a : ann;
     if (head->kind != E_NAME) return NULL;
     Str *nm = AS_STR(head->val);
-    if (def || cls) { if (is_tparam_of(def, nm) || is_tparam_of(cls, nm)) return NULL; }
-    else if (find_var(t, nm)) return NULL;
+    if (def || cls) {
+        if (is_tparam_of(def, nm) || is_tparam_of(cls, nm)) {
+            for (int i = 0; ann->kind == E_NAME && i < ntmap; i++) if (str_eq(tmap[i].name, nm)) return tmap[i].ty;
+            return NULL;
+        }
+    } else if (find_var(t, nm)) return NULL;
     Sym *s = find_sym(t, nm);
     if (s) {
         if (s->kind != SK_RECORD && s->kind != SK_DATA) return NULL;
         Ty *r = mk_ty(s->kind == SK_RECORD ? TK_REC : TK_OTHER, NULL, NULL);
         r->sym = s;
+        if (ann->kind == E_SUBSCR) {   /* Pair[str, int]: remember the arguments */
+            Node *one1[1] = {ann->b}, **as = one1;
+            int ac = 1;
+            if (ann->b->kind == E_TUPLE) { as = ann->b->l[0]; ac = ann->b->n[0]; }
+            r->items = arena_alloc((size_t)(ac + 1) * sizeof(Ty *));
+            for (int i = 0; i < ac; i++) r->items[i] = ty_ann(t, as[i], def, cls);
+            r->n = ac;
+        }
         return r;
     }
     if (ann->kind == E_NAME) {
@@ -588,6 +616,10 @@ static Ty *ty_ann(T *t, Node *ann, Node *def, Node *cls) {
     int argc = 1;
     if (ann->b->kind == E_TUPLE) { args = ann->b->l[0]; argc = ann->b->n[0]; }
     if (str_eqc(nm, "list") && argc == 1) return mk_ty(TK_LIST, ty_ann(t, args[0], def, cls), NULL);
+    if (str_eqc(nm, "Optional") && imported(t, "Optional") && argc == 1) {
+        Ty *inner = ty_ann(t, args[0], def, cls);
+        return inner && inner->k != TK_OPT && inner->k != TK_NONE ? mk_ty(TK_OPT, inner, NULL) : NULL;
+    }
     if (str_eqc(nm, "dict") && argc == 2) return mk_ty(TK_DICT, ty_ann(t, args[0], def, cls), ty_ann(t, args[1], def, cls));
     if (str_eqc(nm, "tuple")) {
         Ty **items = arena_alloc((size_t)(argc + 1) * sizeof(Ty *));
@@ -609,6 +641,35 @@ static Ty *ty_ann(T *t, Node *ann, Node *def, Node *cls) {
     return NULL;
 }
 
+/* Matches an annotation of the def being called against the type wanted, and
+   notes what each square-bracket name must be. */
+static void match_ann(T *t, Node *ann, Ty *want, Node *def, Node *cls) {
+    if (!ann || !want) return;
+    if (ann->kind == E_NAME) {
+        Str *nm = AS_STR(ann->val);
+        if (!is_tparam_of(def, nm) && !is_tparam_of(cls, nm)) return;
+        for (int i = 0; i < ntmap; i++) if (str_eq(tmap[i].name, nm)) return;
+        if (ntmap < 16) { tmap[ntmap].name = nm; tmap[ntmap].ty = want; ntmap++; }
+        return;
+    }
+    if (ann->kind != E_SUBSCR || ann->a->kind != E_NAME) return;
+    Str *nm = AS_STR(ann->a->val);
+    Node *one[1] = {ann->b}, **args = one;
+    int argc = 1;
+    if (ann->b->kind == E_TUPLE) { args = ann->b->l[0]; argc = ann->b->n[0]; }
+    Sym *s = find_sym(t, nm);
+    if (s) {
+        if ((want->k == TK_OTHER || want->k == TK_REC) && want->sym == s && want->n == argc)
+            for (int i = 0; i < argc; i++) match_ann(t, args[i], want->items[i], def, cls);
+    } else if ((str_eqc(nm, "list") && want->k == TK_LIST) || (str_eqc(nm, "Optional") && want->k == TK_OPT)) {
+        if (argc == 1) match_ann(t, args[0], want->a, def, cls);
+    } else if (str_eqc(nm, "dict") && want->k == TK_DICT && argc == 2) {
+        match_ann(t, args[0], want->a, def, cls);
+        match_ann(t, args[1], want->b, def, cls);
+    } else if (str_eqc(nm, "tuple") && want->k == TK_TUPLE && want->n == argc)
+        for (int i = 0; i < argc; i++) match_ann(t, args[i], want->items[i], def, cls);
+}
+
 /* The parameter and result types of a def, for its callers. */
 static void sym_tys(T *t, Sym *s) {
     if (s->tys_done || s->prelude || !s->node || s->node->kind != S_DEF) return;
@@ -623,6 +684,8 @@ static void sym_tys(T *t, Sym *s) {
     }
     s->ret_ty = def->b ? ty_ann(t, def->b, def, cls) : NULL;
 }
+
+static bool is_none(Node *n) { return n->kind == E_CONST && n->val == Py_None; }
 
 static bool is_int_const(Node *n) {
     return n->kind == E_CONST && KIND(n->val) == K_INT && n->val != Py_True && n->val != Py_False;
@@ -687,7 +750,9 @@ static Ty *ty_of(T *t, Node *n) {
         if (n->val == Py_True || n->val == Py_False) return &ty_bool;
         if (KIND(n->val) == K_INT) return int_sign(n->val) < 0 ? &ty_int : &ty_nat;
         if (IS_STR(n->val)) return &ty_str;
+        if (n->val == Py_None) return &ty_none;
         return NULL;
+    case E_FSTRING: return &ty_str;
     case E_NAME: {
         Var *v = find_var(t, AS_STR(n->val));
         if (v) return v->ty;
@@ -701,7 +766,7 @@ static Ty *ty_of(T *t, Node *n) {
             Str *m = AS_STR(n->a->val);
             if (tk(r) == TK_LIST && str_eqc(m, "copy")) return r;
             if (tk(r) == TK_DICT && str_eqc(m, "copy")) return r;
-            if (tk(r) == TK_DICT && str_eqc(m, "get")) return r->b;
+            if (tk(r) == TK_DICT && str_eqc(m, "get")) return argc == 1 && r->b ? mk_ty(TK_OPT, r->b, NULL) : r->b;
             if (tk(r) == TK_REC) { Sym *ms = method_of(t, r->sym, m); if (ms) { sym_tys(t, ms); return ms->ret_ty; } }
             return NULL;
         }
@@ -743,7 +808,12 @@ static Ty *ty_of(T *t, Node *n) {
         return &ty_nat;
     }
     case E_COMPARE: case E_NOT: case E_BOOLOP: return &ty_bool;
-    case E_IFEXP: { Ty *a = ty_of(t, n->b); return a ? a : ty_of(t, n->c); }
+    case E_IFEXP: {
+        Ty *a = ty_of(t, n->b), *b = ty_of(t, n->c);
+        if (tk(a) == TK_NONE && b && b->k != TK_NONE) return b->k == TK_OPT ? b : mk_ty(TK_OPT, b, NULL);
+        if (tk(b) == TK_NONE && a && a->k != TK_NONE) return a->k == TK_OPT ? a : mk_ty(TK_OPT, a, NULL);
+        return a ? a : b;
+    }
     case E_TUPLE: {
         Ty **items = arena_alloc((size_t)(n->n[0] + 1) * sizeof(Ty *));
         for (int i = 0; i < n->n[0]; i++) items[i] = ty_of(t, n->l[0][i]);
@@ -948,8 +1018,21 @@ static const char *auto_refl(T *t, int line) {
    when Agda can compute the divisor. */
 static const char *div_proof(T *t, const char *b, bool is_int, int line) {
     const char *p = fact_proof(t, is_int ? af("(%s == (pos 0))", b) : af("(%s == 0)", b), false);
-    return p ? p : auto_refl(t, line);
+    if (p) return p;
+    if (is_int) {
+        /* b > 0 and b < 0 each rule out zero */
+        if ((p = fact_proof(t, af("((pos 0) <\xE1\xB5\xA2 %s)", b), true))) return af("(posNotZero {%s} %s)", b, p);
+        if ((p = fact_proof(t, af("(%s <\xE1\xB5\xA2 (pos 0))", b), true))) return af("(negNotZero {%s} %s)", b, p);
+        /* a Nat used as an int: (pos n == pos 0) is (n == 0) */
+        size_t n = strlen(b);
+        if (strncmp(b, "(pos ", 5) == 0 && b[n - 1] == ')') return div_proof(t, af("%.*s", (int)(n - 6), b + 5), false, line);
+        return auto_refl(t, line);
+    }
+    if ((p = fact_proof(t, af("(0 < %s)", b), true))) return af("(ltNotZero {%s} %s)", b, p);
+    return auto_refl(t, line);
 }
+
+static const char *maybe_type(T *t, Node *inner, int line);
 
 static const char *binop_expr(T *t, Node *n, Ty *want) {
     Ty *lt = ty_of(t, n->a), *rt = ty_of(t, n->b);
@@ -958,6 +1041,8 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
     /* a - b on two Nats is fine when an int is wanted: it is worked out as ints. */
     if (k == TK_NAT && tk(want) == TK_INT && op == OP_SUB) k = TK_INT;
     if (k == TK_NAT && tk(want) == TK_LIST && op == OP_ADD) k = TK_LIST;
+    if (op == OP_OR && t->c.in_type && (is_none(n->a) || is_none(n->b)))
+        return maybe_type(t, is_none(n->a) ? n->b : n->a, n->line);
     if (op == OP_TRUEDIV)
         terr(t, n->line, "'/' gives a float, and floats are not available in a checked file. Use // for whole-number division.");
     if (k == TK_INT) {
@@ -1019,6 +1104,9 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
    ints, the literals on the other side are written as ints too. */
 static Ty *both_want(T *t, Node *x, Node *y) {
     Ty *a = ty_of(t, x), *b = ty_of(t, y);
+    /* x == "pen" with an x that may be None compares against "pen, and not None" */
+    if (tk(a) == TK_OPT) return a;
+    if (tk(b) == TK_OPT) return b;
     return ty_has_int(a) ? a : ty_has_int(b) ? b : NULL;
 }
 
@@ -1036,8 +1124,13 @@ static const char *cmp_text(T *t, int op, Node *x, Node *y, bool core, bool *pol
         if (core) { *pol = false; return in; }
         return af("(not %s)", in);
     }
-    if (op != CMP_LT && op != CMP_LE && op != CMP_EQ && op != CMP_NE && op != CMP_GT && op != CMP_GE)
-        terr(t, x->line, "'is' is not available in a checked file; use ==");
+    if (op == CMP_IS || op == CMP_IS_NOT) {
+        if (!is_none(y)) terr(t, x->line, "'is' is only available as 'is None' and 'is not None' in a checked file; use ==");
+        const char *in = af("(isNone %s)", ER(t, x, NULL));
+        if (op == CMP_IS) return in;
+        if (core) { *pol = false; return in; }
+        return af("(not %s)", in);
+    }
     Ty *w = both_want(t, x, y);
     bool is_int = tk(w) == TK_INT;
     const char *a = ER(t, x, w), *b = ER(t, y, w);
@@ -1052,16 +1145,56 @@ static const char *cmp_text(T *t, int op, Node *x, Node *y, bool core, bool *pol
     }
 }
 
-/* A condition as a plain test and whether the condition is that test or its opposite. */
+static const char *C(T *t, Node *c);
+
+/* A condition as a plain test and whether the condition is that test or its
+   opposite. A list, dict, str or number used as a condition is true when it is
+   not empty and not zero, as in Python. */
 static const char *cond_core(T *t, Node *c, bool *pol) {
+    *pol = true;
     if (c->kind == E_NOT) {
         const char *r = cond_core(t, c->a, pol);
         *pol = !*pol;
         return r;
     }
     if (c->kind == E_COMPARE && c->n[0] == 1) return cmp_text(t, c->ops[0], c->a, c->l[0][0], true, pol);
-    *pol = true;
-    return E(t, c);
+    if (c->kind == E_BOOLOP) {
+        const char *all = C(t, c->l[0][0]);
+        for (int i = 1; i < c->n[0]; i++) all = af("(%s %s %s)", all, c->op ? "\xE2\x88\xA8" : "\xE2\x88\xA7", C(t, c->l[0][i]));
+        return all;
+    }
+    if (c->kind == E_COMPARE || c->kind == E_CONST) return E(t, c);
+    switch (tk(ty_of(t, c))) {
+    case TK_LIST: return af("(0 < (len %s))", ER(t, c, NULL));
+    case TK_DICT: return af("(0 < (dlen %s))", ER(t, c, NULL));
+    case TK_STR: return af("(0 < (strLen %s))", E(t, c));
+    case TK_NAT: return af("(0 < %s)", E(t, c));
+    case TK_INT: *pol = false; return af("(%s == (pos 0))", E(t, c));
+    case TK_OPT: terr(t, c->line, "a value that may be None is tested with 'is None' or 'is not None'");
+    default: return E(t, c);
+    }
+}
+
+/* A condition as Agda text of type Bool. */
+static const char *C(T *t, Node *c) {
+    bool pol;
+    const char *core = cond_core(t, c, &pol);
+    return pol ? core : af("(not %s)", core);
+}
+
+/* `x is None` or `x is not None`, where x is a local name that may be None. */
+static Var *none_test(T *t, Node *c, bool *then_is_none) {
+    if (c->kind == E_NOT) {
+        Var *v = none_test(t, c->a, then_is_none);
+        *then_is_none = !*then_is_none;
+        return v;
+    }
+    if (c->kind != E_COMPARE || c->n[0] != 1 || (c->ops[0] != CMP_IS && c->ops[0] != CMP_IS_NOT)) return NULL;
+    if (c->a->kind != E_NAME || !is_none(c->l[0][0])) return NULL;
+    Var *v = find_var(t, AS_STR(c->a->val));
+    if (!v || tk(v->ty) != TK_OPT || v->erased || v->dead) return NULL;
+    *then_is_none = c->ops[0] == CMP_IS;
+    return v;
 }
 
 /* A proof that condition `c` is true, from a fact in scope. */
@@ -1128,7 +1261,7 @@ static const char *comp_expr(T *t, Node *n, Ty *want_elem, int gi) {
     const char *pat = target_pat(t, g->a, elem);
     const char *conds = NULL;
     for (int i = 0; i < g->n[0]; i++) {
-        const char *c = E(t, g->l[0][i]);
+        const char *c = C(t, g->l[0][i]);
         conds = conds ? af("(%s \xE2\x88\xA7 %s)", conds, c) : c;
     }
     const char *inner = comp_expr(t, n, want_elem, gi + 1);
@@ -1164,7 +1297,9 @@ static const char *builtin_call(T *t, Node *n, const char *b, Ty *want) {
         if (tk(at) == TK_STR) return E(t, a[0]);
         if (tk(at) == TK_INT) return af("(showInt %s)", E(t, a[0]));
         if (tk(at) == TK_NAT) return af("(showNat %s)", E(t, a[0]));
-        terr(t, n->line, "str(...) is available for Nat, int and str in a checked file");
+        if (tk(at) == TK_BOOL) return af("(showBool %s)", E(t, a[0]));
+        if (t->c.printing) return af("(shown %s)", E(t, a[0]));
+        terr(t, n->line, "outside print(...), str(...) is available for Nat, int, bool and str in a checked file");
     }
     if (two) {
         bool is_int = tk(at) == TK_INT || tk(ty_of(t, a[1])) == TK_INT || tk(want) == TK_INT;
@@ -1179,8 +1314,55 @@ static const char *builtin_call(T *t, Node *n, const char *b, Ty *want) {
     return af("(%s %s)", !strcmp(b, "any") ? "anyL" : "allL", EI(t, a[0]));
 }
 
-static const char *record_call(T *t, Sym *s, Node *n);
+static const char *record_call(T *t, Sym *s, Node *n, Ty *want);
 static const char *method_call(T *t, Node *n);
+
+/* The arguments of a call to a def, in the order of its parameters: the ones
+   given by position, the ones given by name, and defaults for the rest. `skip`
+   is 1 for a method, whose self is not among the arguments. */
+static const char *def_args(T *t, Sym *s, Node *n, int skip, Ty *want) {
+    Params *p = s->node->params;
+    int np = p->n, argc = n->n[0], pos = 0, required = 0, nkw = 0;
+    const char *shown = s->mname ? s->mname->s : s->py->s;
+    Node **slot = arena_alloc((size_t)(np + 1) * sizeof(Node *));
+    for (int i = skip; i < np; i++) if (!p->defaults[i]) required++;
+    for (int i = 0; i < argc; i++) {
+        Node *a = n->l[0][i];
+        if (a->kind == E_STARRED || (a->kind == E_KEYWORD && !a->val)) terr(t, a->line, "* arguments are not available in a checked file");
+        if (a->kind == E_KEYWORD) {
+            int at = -1;
+            for (int j = skip; j < np; j++) if (str_eq(p->names[j], AS_STR(a->val))) at = j;
+            if (at < 0) terr(t, a->line, "%s() has no parameter '%s'", shown, AS_STR(a->val)->s);
+            if (slot[at]) terr(t, a->line, "%s() is given '%s' twice", shown, AS_STR(a->val)->s);
+            slot[at] = a->a;
+            nkw++;
+        } else if (skip + pos < np) slot[skip + pos++] = a;
+        else pos++;
+    }
+    int have = np - skip;
+    if (pos > have || (!nkw && pos < required)) {
+        if (required == have)
+            terr(t, n->line, "%s() takes %d argument%s but %d %s given", shown, have, have == 1 ? "" : "s", argc, argc == 1 ? "was" : "were");
+        terr(t, n->line, "%s() takes from %d to %d arguments but %d %s given", shown, required, have, argc, argc == 1 ? "was" : "were");
+    }
+    sym_tys(t, s);
+    /* Where a parameter's type is a square-bracket name, the type wanted from the
+       call may say what the name stands for. */
+    Ty **pts = arena_alloc((size_t)(np + 1) * sizeof(Ty *));
+    Node *cls = s->owner ? s->owner->node : NULL;
+    ntmap = 0;
+    if (want) match_ann(t, s->node->b, want, s->node, cls);
+    for (int i = skip; i < np; i++)
+        pts[i] = s->p_tys[i] || !ntmap || !p->ann[i] ? s->p_tys[i] : ty_ann(t, p->ann[i], s->node, cls);
+    ntmap = 0;
+    const char *text = "";
+    for (int i = skip; i < np; i++) {
+        Node *a = slot[i] ? slot[i] : p->defaults[i];
+        if (!a) terr(t, n->line, "%s() is missing the argument '%s'", shown, p->names[i]->s);
+        text = af("%s %s", text, EW(t, a, pts[i]));
+    }
+    return text;
+}
 
 static const char *call_expr(T *t, Node *n, Ty *want) {
     static const char *const cn[] = {"call\xE2\x82\x80", "call\xE2\x82\x81", "call\xE2\x82\x82", "call\xE2\x82\x83", "call\xE2\x82\x84"};
@@ -1193,7 +1375,7 @@ static const char *call_expr(T *t, Node *n, Ty *want) {
         if (b) return builtin_call(t, n, b, want);
         Ref r = lookup(t, AS_STR(n->a->val), n->line);
         Sym *s = r.s;
-        if (s && s->kind == SK_RECORD) return record_call(t, s, n);
+        if (s && s->kind == SK_RECORD) return record_call(t, s, n, want);
         if (sym_is(s, "known")) {
             if (argc != 1 || n->l[0][0]->kind == E_KEYWORD) terr(t, n->line, "known takes one condition");
             return known_proof(t, n->l[0][0], n->line);
@@ -1204,6 +1386,10 @@ static const char *call_expr(T *t, Node *n, Ty *want) {
             if (argc) terr(t, n->line, "hole() takes no arguments");
             t->nholes++;
             return "{!!}";
+        }
+        if (s && (s->kind == SK_FUNC || s->kind == SK_CTOR) && !s->prelude) {
+            const char *args = def_args(t, s, n, 0, want);
+            return *args ? af("(%s%s)", s->agda, args) : s->agda;
         }
         if (s && (s->kind == SK_FUNC || s->kind == SK_CTOR)) {
             if (argc != s->arity)
@@ -1311,6 +1497,18 @@ static const char *index_expr(T *t, Node *n) {
     }
 }
 
+/* Optional[T], or T | None. In Python a value of this type is None or a T, and
+   nothing tells "None" from "a None inside". So T has to be a type that the
+   checker can see never holds None itself. */
+static const char *maybe_type(T *t, Node *inner, int line) {
+    Ty *ty = ty_ann(t, inner, NULL, NULL);
+    if (!ty)
+        terr(t, line, "Optional needs a type the checker knows, such as int, str, list[int] or a class. "
+                      "A name in square brackets could itself stand for an Optional type.");
+    if (ty->k == TK_OPT || ty->k == TK_NONE) terr(t, line, "Optional of a type that can already be None is not available");
+    return af("(Maybe %s)", tr_type(t, inner));
+}
+
 static const char *subscript_expr(T *t, Node *n) {
     Sym *s = NULL;
     if (n->a->kind == E_NAME && !find_var(t, AS_STR(n->a->val))) {
@@ -1345,6 +1543,7 @@ static const char *subscript_expr(T *t, Node *n) {
         return af("(%s \xE2\x89\xA1 %s)", a, EW(t, args[1], w));
     }
     if (sym_is(s, "list")) return af("(List %s)", tr_type(t, args[0]));
+    if (sym_is(s, "Optional")) return maybe_type(t, args[0], n->line);
     if (sym_is(s, "dict")) {
         const char *k = tr_type(t, args[0]);
         return af("(Dict %s %s)", k, tr_type(t, args[1]));
@@ -1355,6 +1554,7 @@ static const char *subscript_expr(T *t, Node *n) {
 }
 
 static const char *attr_expr(T *t, Node *n);
+static const char *fstring_expr(T *t, Node *n);
 
 static const char *lambda_expr(T *t, Node *n, Ty *want) {
     static const char *const w[] = {"fun\xE2\x82\x80", "fun\xE2\x82\x81", "fun\xE2\x82\x82", "fun\xE2\x82\x83", "fun\xE2\x82\x84"};
@@ -1379,8 +1579,52 @@ static const char *lambda_expr(T *t, Node *n, Ty *want) {
     return af("(%s (\xCE\xBB%s \xE2\x86\x92 %s))", w[p->n], names, body);
 }
 
+/* f"..." joins its parts as strings. Inside print the result is only shown, so a
+   part can be any value; elsewhere a part is a str, Nat, int or bool, the types
+   whose text the Agda side works out the same way Python does. */
+static const char *fstring_expr(T *t, Node *n) {
+    const char *text = NULL;
+    for (int i = 0; i < n->n[0]; i++) {
+        Node *p = n->l[0][i];
+        const char *one;
+        if (p->kind == E_CONST) one = const_text(t, p);
+        else {
+            Ty *ty = ty_of(t, p->a);
+            bool plain = !p->op && !p->b;
+            if (!plain && !t->c.printing)
+                terr(t, p->line, "a format spec or conversion in an f-string is available inside print(...) only in a checked file");
+            if (plain && tk(ty) == TK_STR) one = E(t, p->a);
+            else if (plain && tk(ty) == TK_NAT) one = af("(showNat %s)", E(t, p->a));
+            else if (plain && tk(ty) == TK_INT) one = af("(showInt %s)", E(t, p->a));
+            else if (plain && tk(ty) == TK_BOOL) one = af("(showBool %s)", E(t, p->a));
+            else if (t->c.printing) one = af("(shown %s)", E(t, p->a));
+            else
+                terr(t, p->line, "outside print(...), an f-string in a checked file can hold str, Nat, int and bool values. "
+                                 "The checker does not know the type of this one, or it is another type.");
+        }
+        text = text ? af("(concat %s %s)", text, one) : one;
+    }
+    return text ? text : "\"\"";
+}
+
 static const char *EW(T *t, Node *n, Ty *want) {
     int wk = tk(want);
+    if (is_none(n)) {
+        if (t->c.in_type) return "\xE2\x8A\xA4";
+        if (wk == TK_OPT) return "nothing";
+        if (wk == TK_NONE) return "tt";
+        terr(t, n->line, "the checker cannot tell what None stands for here. Give the name a type: x: Optional[int] = None");
+    }
+    if (wk == TK_OPT && n->kind != E_IFEXP) {
+        /* A plain value where "this or None" is wanted is wrapped. */
+        Ty *have = ty_of(t, n);
+        if (tk(have) == TK_OPT) return EW(t, n, NULL);
+        if (tk(have) == TK_NONE) return "nothing";
+        return af("(just %s)", EW(t, n, want->a));
+    }
+    if (want && wk != TK_OPT && wk != TK_NONE && n->kind != E_IFEXP && tk(ty_of(t, n)) == TK_OPT)
+        terr(t, n->line, "this value may be None, and a value that is never None is needed here. "
+                         "Test it first with 'if ... is None:' or 'if ... is not None:'.");
     if (wk == TK_INT) {
         if (is_int_const(n)) return int_lit(t, n, false);
         bool own = n->kind == E_IFEXP || n->kind == E_UNARY || (n->kind == E_BINOP && n->op == OP_SUB) ||
@@ -1414,14 +1658,15 @@ static const char *EW(T *t, Node *n, Ty *want) {
         }
         return all;
     }
-    case E_NOT: return af("(not %s)", E(t, n->a));
+    case E_NOT: return af("(not %s)", C(t, n->a));
+    case E_FSTRING: return fstring_expr(t, n);
     case E_BOOLOP: {
         const char *all = E(t, n->l[0][0]);
         for (int i = 1; i < n->n[0]; i++) all = af("(%s %s %s)", all, n->op ? "\xE2\x88\xA8" : "\xE2\x88\xA7", E(t, n->l[0][i]));
         return all;
     }
     case E_IFEXP: {
-        const char *c = E(t, n->a), *a = EW(t, n->b, want);
+        const char *c = C(t, n->a), *a = EW(t, n->b, want);
         return af("(if %s then %s else %s)", c, a, EW(t, n->c, want));
     }
     case E_LAMBDA: return lambda_expr(t, n, want);
@@ -1469,7 +1714,6 @@ static const char *EW(T *t, Node *n, Ty *want) {
     case E_SLICE: terr(t, n->line, "a slice is written inside square brackets after a list");
     case E_SET: case E_SETCOMP: case E_DICTCOMP: terr(t, n->line, "sets and dict comprehensions are not available in a checked file");
     case E_NAMED: terr(t, n->line, "':=' is not available in a checked file");
-    case E_FSTRING: terr(t, n->line, "f-strings are not available in a checked file");
     default: terr(t, n->line, "this expression is not available in a checked file");
     }
 }
@@ -1491,14 +1735,19 @@ static const char *tr_type(T *t, Node *n) {
 
 /* ---------- signatures ---------- */
 
-static void check_params(T *t, Node *def, bool method) {
+static void check_params(T *t, Node *def, bool method, bool ctor) {
     Params *p = def->params;
     if (p->vararg || p->kwarg || p->nkwonly || p->nposonly)
         terr(t, def->line, "a checked function takes plain parameters only: no *, ** or /");
     if (method && (!p->n || !str_eqc(p->names[0], "self")))
         terr(t, def->line, "a method's first parameter is self");
     for (int i = 0; i < p->n; i++) {
-        if (p->defaults[i]) terr(t, def->line, "default values are not available in a checked file");
+        Node *d = p->defaults[i];
+        /* A default is worked out once, when the def runs. Only a value that cannot
+           change is the same thing at every call. */
+        if (d && (ctor || !(d->kind == E_CONST || (d->kind == E_UNARY && d->a->kind == E_CONST))))
+            terr(t, def->line, ctor ? "default values are not available on a constructor"
+                                    : "a default value in a checked file is a number, a string, True, False or None, written out");
         if (!p->ann[i] && !(method && i == 0)) terr(t, def->line, "parameter '%s' needs a type annotation", p->names[i]->s);
     }
     if (!def->b) terr(t, def->line, "'%s' needs a return annotation", AS_STR(def->val)->s);
@@ -1523,7 +1772,7 @@ static void emit_func_sig(T *t, Sym *s) {
     if (s->busy) terr(t, def->line, "the annotations of '%s' depend on '%s' itself", s->py->s, s->py->s);
     if (s->owner && !s->owner->body_done) emit_record(t, s->owner);
     s->busy = true;
-    check_params(t, def, s->owner != NULL);
+    check_params(t, def, s->owner != NULL, false);
     Ctx saved = t->c;
     t->c = (Ctx){0};
     Node **tps;
@@ -1634,7 +1883,7 @@ static void emit_data_body(T *t, Sym *s) {
         Sym *k = s->ctors[c];
         Node *def = k->node, **args;
         int nargs = ret_args(k, &args);
-        check_params(t, def, false);
+        check_params(t, def, false, true);
         t->c = (Ctx){0};
         t->cur = &chunk;
         for (int i = 0; i < s->nparams; i++) mark_used(t, s->tp_names[i]);
@@ -1755,8 +2004,17 @@ static void emit_record(T *t, Sym *s) {
 }
 
 /* Point(1, 2) or Point(x=1, y=2) */
-static const char *record_call(T *t, Sym *s, Node *n) {
+static const char *record_call(T *t, Sym *s, Node *n, Ty *want) {
     int argc = n->n[0];
+    /* Box[int]("a", 1): the fields whose type is a square-bracket name get the type
+       the annotation gives that name. */
+    Ty **fts = arena_alloc((size_t)(s->nfields + 1) * sizeof(Ty *));
+    ntmap = 0;
+    if (tk(want) == TK_REC && want->sym == s && want->n == s->arity)
+        for (int i = 0; i < s->arity && i < 16; i++) { tmap[ntmap].name = AS_STR(s->node->l[3][i]->val); tmap[ntmap].ty = want->items[i]; ntmap++; }
+    for (int i = 0; i < s->nfields; i++)
+        fts[i] = s->fields[i]->ty || !ntmap ? s->fields[i]->ty : ty_ann(t, s->fields[i]->node, NULL, s->node);
+    ntmap = 0;
     if (argc != s->nfields)
         terr(t, n->line, "%s() takes %d argument%s but %d %s given", s->py->s, s->nfields, s->nfields == 1 ? "" : "s", argc,
              argc == 1 ? "was" : "were");
@@ -1772,7 +2030,7 @@ static const char *record_call(T *t, Sym *s, Node *n) {
             a = a->a;
         }
         if (parts[at]) terr(t, a->line, "the field '%s' is given twice", s->fields[at]->py->s);
-        parts[at] = EW(t, a, s->fields[at]->ty);
+        parts[at] = EW(t, a, fts[at]);
     }
     const char *text = s->ctor;
     for (int i = 0; i < argc; i++) text = af("%s %s", text, parts[i]);
@@ -1806,13 +2064,9 @@ static const char *method_call(T *t, Node *n) {
         need(t, rt->sym, n->line);
         Sym *ms = method_of(t, rt->sym, m);
         if (ms) {
-            if (argc + 1 != ms->arity)
-                terr(t, n->line, "%s() takes %d argument%s but %d %s given", m->s, ms->arity - 1, ms->arity == 2 ? "" : "s",
-                     argc, argc == 1 ? "was" : "were");
             need(t, ms, n->line);
-            sym_tys(t, ms);
             const char *self = ER(t, recv, NULL);
-            return af("(%s %s%s)", ms->agda, self, join_args(t, n->l[0], argc, ms->p_tys + 1));
+            return af("(%s %s%s)", ms->agda, self, def_args(t, ms, n, 1, NULL));
         }
         Sym *f = field_of(rt->sym, m);
         if (!f) terr(t, n->line, "'%s' has no method '%s'", rt->sym->py->s, m->s);
@@ -1822,9 +2076,10 @@ static const char *method_call(T *t, Node *n) {
     }
     if ((tk(rt) == TK_LIST || tk(rt) == TK_DICT) && str_eqc(m, "copy") && argc == 0) return ER(t, recv, NULL);
     if (tk(rt) == TK_DICT && str_eqc(m, "get")) {
-        if (argc != 2) terr(t, n->line, "d.get takes the key and a value to give back when the key is missing");
+        if (argc != 1 && argc != 2) terr(t, n->line, "d.get takes the key, and optionally a value to give back when the key is missing");
         const char *d = ER(t, recv, NULL);
         const char *k = EW(t, n->l[0][0], rt->a);
+        if (argc == 1) return af("(dfind %s %s)", d, k);   /* None when the key is missing */
         return af("(dget %s %s %s)", d, k, EW(t, n->l[0][1], rt->b));
     }
     if (tk(rt) == TK_DICT && (str_eqc(m, "items") || str_eqc(m, "keys") || str_eqc(m, "values")))
@@ -2219,7 +2474,6 @@ __attribute__((noreturn)) static void bad_stmt(T *t, Node *s, bool top) {
     case S_CLASS: what = "a nested class"; break;
     case S_GLOBAL: case S_NONLOCAL: what = "global or nonlocal"; break;
     case S_IMPORT: case S_IMPORTFROM: what = "an import"; break;
-    case S_ASSERT: what = "assert"; break;
     case S_RETURN: what = "return"; break;
     case S_MATCH: what = "match"; break;
     case S_IF: what = "if"; break;
@@ -2230,9 +2484,9 @@ __attribute__((noreturn)) static void bad_stmt(T *t, Node *s, bool top) {
     }
     if (top)
         terr(t, s->line, "%s is not available at the top level of a checked file. The top level holds imports, "
-                         "classes, defs, assignments, print, assert, and for loops that print.", what);
+                         "classes, defs, assignments, calls, print, assert, and for loops that print.", what);
     terr(t, s->line, "%s is not available inside a checked function. A checked function is built from "
-                     "assignments, if, match, for, while and return.", what);
+                     "assignments, calls, print, assert, if, match, for, while and return.", what);
 }
 
 /* --- patterns --- */
@@ -2441,6 +2695,50 @@ static void no_more(T *t, K *k, const char *what) {
 typedef struct { Str **carried; int n; bool has_ret; bool *fresh_after; Ty **tys; } Loop;
 static void loop_emit(T *t, Node *s, Tail *outer, Loop *L);
 static void sx(T *t, K *k, Tail *tl, int line);
+static bool is_print(T *t, Node *s);
+
+/* A statement that is run for what it does and gives no value to the rest: a
+   call, or print(...). Returns the Agda text to type-check, or NULL when there is
+   nothing to check. What print writes is not part of what the checker reasons
+   about; its arguments are checked like any other expression. */
+static const char *effect_stmt(T *t, Node *s) {
+    if (s->kind != S_EXPR || s->a->kind != E_CALL) return NULL;
+    if (!is_print(t, s)) return E(t, s->a);
+    Node *c = s->a;
+    const char *text = NULL;
+    t->c.printing++;
+    for (int j = c->n[0] - 1; j >= 0; j--) {
+        Node *a = c->l[0][j];
+        const char *one;
+        if (a->kind == E_STARRED) terr(t, a->line, "* arguments are not available in a checked file");
+        if (a->kind == E_KEYWORD) {
+            bool ok = a->val && (str_eqc(AS_STR(a->val), "sep") || str_eqc(AS_STR(a->val), "end"));
+            if (!ok) terr(t, a->line, "print in a checked file takes sep= and end= only");
+            one = af("(the String %s)", E(t, a->a));
+        } else if (a->kind == E_CONST) continue;
+        else one = E(t, a);
+        text = text ? af("(also %s %s)", one, text) : one;
+    }
+    t->c.printing--;
+    return text;
+}
+
+static bool is_effect(T *t, Node *s) {
+    if (s->kind != S_EXPR || s->a->kind != E_CALL) return false;
+    if (is_print(t, s)) return true;
+    Node *f = s->a->a;
+    if (f->kind == E_ATTR) return !changing_method(AS_STR(f->val));
+    return f->kind == E_NAME && !is_decreases(t, s);
+}
+
+/* assert c inside a function: the condition has to be one the checker can see
+   holds, and after it the rest of the function may rely on it. Returns the proof. */
+static const char *assert_proof(T *t, Node *s, const char **core, bool *pol) {
+    if (s->b && s->b->kind != E_CONST) terr(t, s->line, "an assert message in a checked file is a plain string");
+    *core = cond_core(t, s->a, pol);
+    const char *p = fact_proof(t, *core, *pol);
+    return p ? p : auto_refl(t, s->line);
+}
 
 /* Tries the statements after a match as its last case. They may read a name that
    only the cases assign; then no last case is written, and Agda insists that the
@@ -2473,7 +2771,11 @@ static void sx(T *t, K *k, Tail *tl, int line) {
     for (;;) {
         k = k_norm(k);
         if (!k) {
-            if (!tl->loop) terr(t, line, "this function can reach its end without a return");
+            if (!tl->loop) {
+                if (tk(tl->ret) != TK_NONE) terr(t, line, "this function can reach its end without a return");
+                o_put(t->cur, line, "  tt\n");
+                return;
+            }
             const char *st = state_text(t, tl, line);
             if (tl->is_while) o_put(t->cur, tl->dec->line, af("  (wnext %s %s)\n", st, E(t, tl->dec->a->l[0][1])));
             else o_put(t->cur, line, af("  (next %s)\n", st));
@@ -2485,10 +2787,19 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         line = s->line;
         switch (s->kind) {
         case S_RETURN:
-            if (!s->a) terr(t, s->line, "return needs a value in a checked function");
+            if (!s->a && tk(tl->ret) != TK_NONE) terr(t, s->line, "return needs a value in a function that does not return None");
             no_more(t, k, "return");
-            o_put(t->cur, s->line, af("  %s\n", ret_text(tl, EW(t, s->a, tl->ret))));
+            o_put(t->cur, s->line, af("  %s\n", ret_text(tl, s->a ? EW(t, s->a, tl->ret) : "tt")));
             return;
+        case S_ASSERT: {
+            bool pol;
+            const char *core, *p = assert_proof(t, s, &core, &pol);
+            const char *a = fresh(t, "a");
+            o_put(t->cur, s->line, af("  let %s : (%s \xE2\x89\xA1 %s) ; %s = %s in\n", a, core, pol ? "true" : "false", a, p));
+            add_fact(t, core, pol, a);
+            k = rest;
+            continue;
+        }
         case S_BREAK: case S_CONTINUE: {
             if (!tl->loop) bad_stmt(t, s, false);
             no_more(t, k, s->kind == S_BREAK ? "break" : "continue");
@@ -2512,7 +2823,11 @@ static void sx(T *t, K *k, Tail *tl, int line) {
             if (s->kind == S_EXPR) {
                 if (is_decreases(t, s))
                     terr(t, s->line, "decreases(measure, proof) is written once, as the last statement of a while loop");
-                bad_stmt(t, s, false);
+                if (!is_effect(t, s)) bad_stmt(t, s, false);
+                const char *e = effect_stmt(t, s);
+                if (e) o_put(t->cur, s->line, af("  let %s = (ignore %s) in\n", fresh(t, "u"), e));
+                k = rest;
+                continue;
             }
             Asg a;
             plain_assign(t, s, &a);
@@ -2534,6 +2849,24 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         }
         case S_IF: {
             s = split_boolop(s);
+            bool then_none = false;
+            Var *ov = none_test(t, s->a, &then_none);
+            if (ov) {
+                /* None or not: in the second case the name stands for the value inside */
+                Mark m = mark(t);
+                const char *p = fresh(t, ov->py->s);
+                Str *name = ov->py;
+                Ty *inner = ov->ty->a;
+                o_put(t->cur, s->line, af("  (case\xE2\x82\x80 %s of \xCE\xBB { nothing \xE2\x86\x92\n", ov->term));
+                sx(t, k_push(s->l[then_none ? 0 : 1], s->n[then_none ? 0 : 1], rest), tl, s->line);
+                reset(t, m);
+                o_put(t->cur, s->line, af("  ; (just %s) \xE2\x86\x92\n", p));
+                bindv(t, name, p, false, inner, s->line);
+                sx(t, k_push(s->l[then_none ? 1 : 0], s->n[then_none ? 1 : 0], rest), tl, s->line);
+                reset(t, m);
+                o_put(t->cur, s->line, "  })\n");
+                return;
+            }
             bool pol;
             const char *core = cond_core(t, s->a, &pol);
             const char *h = fresh(t, "h");
@@ -2757,7 +3090,11 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
     fn_tail.ret = t->c.ret_ty;
     for (;;) {
         k = k_norm(k);
-        if (!k) terr(t, line, "this function can reach its end without a return");
+        if (!k) {
+            if (tk(fn_tail.ret) != TK_NONE) terr(t, line, "this function can reach its end without a return");
+            o_put(t->cur, line, af("%s =\n  tt\n", lhs));
+            return;
+        }
         Node *s = k->l[k->i];
         K *rest = k_tail(k);
         if (skippable(s)) { k = rest; continue; }
@@ -2779,7 +3116,15 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
             if (s->kind == S_EXPR) {
                 if (is_decreases(t, s))
                     terr(t, s->line, "decreases(measure, proof) is written once, as the last statement of a while loop");
-                bad_stmt(t, s, false);
+                if (!is_effect(t, s)) bad_stmt(t, s, false);
+                const char *e = effect_stmt(t, s);
+                if (e) {
+                    /* a column that nothing reads: the expression is checked */
+                    o_put(t->cur, s->line, af("%s with (ignore %s)\n", lhs, e));
+                    lhs = af("%s | %s", lhs, fresh(t, "u"));
+                }
+                k = rest;
+                continue;
             }
             Asg a;
             plain_assign(t, s, &a);
@@ -2815,10 +3160,50 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
             k = rest;
             continue;
         }
+        case S_ASSERT: {
+            bool pol;
+            const char *core, *p = assert_proof(t, s, &core, &pol);
+            const char *a = fresh(t, "a");
+            o_put(t->cur, s->line, af("%s with the (%s \xE2\x89\xA1 %s) %s\n", lhs, core, pol ? "true" : "false", p));
+            lhs = af("%s | %s", lhs, a);
+            add_fact(t, core, pol, a);
+            k = rest;
+            continue;
+        }
         case S_IF: {
             s = split_boolop(s);
             K *kt = k_push(s->l[0], s->n[0], rest), *ke = k_push(s->l[1], s->n[1], rest);
             Mark m = mark(t);
+            bool then_none = false;
+            Var *ov = none_test(t, s->a, &then_none);
+            if (ov) {
+                /* None or not. In the second case the name stands for the value inside. */
+                Str *name = ov->py;
+                Ty *inner = ov->ty->a;
+                const char *xt = ov->term, *p = lhs_var(t, fresh(t, name->s));
+                const char *just = af("(just %s)", p), *lhs_none, *lhs_just;
+                Var *env_none = t->c.env, *env_just = t->c.env;
+                bool nat2 = false;
+                if (var_by_term(t, xt, &nat2)) {
+                    env_none = env_subst(t, xt, "nothing", false, NULL);
+                    env_just = env_subst(t, xt, just, false, NULL);
+                    lhs_none = subst_ident(lhs, xt, "nothing");
+                    lhs_just = subst_ident(lhs, xt, just);
+                } else {
+                    o_put(t->cur, s->line, af("%s with %s\n", lhs, xt));
+                    lhs_none = af("%s | nothing", lhs);
+                    lhs_just = af("%s | just %s", lhs, p);
+                }
+                for (int pass = 0; pass < 2; pass++) {
+                    bool none_now = (pass == 0) == then_none;
+                    t->c.leaks = m.leaks;
+                    t->c.env = none_now ? env_none : env_just;
+                    if (!none_now) bindv(t, name, p, true, inner, s->line);
+                    clauses(t, none_now ? lhs_none : lhs_just, pass == 0 ? kt : ke, s->line);
+                }
+                reset(t, m);
+                return;
+            }
             bool then_is_zero = false, nat = false;
             Node *x = zero_test(s->a, &then_is_zero);
             if (x && tk(ty_of(t, x->kind == E_BINOP ? x->a : x)) == TK_INT) x = NULL;
@@ -3225,6 +3610,7 @@ static void begin_executed(T *t, Node *s) {
    in the for loops it is inside. */
 static void top_print(T *t, Node *s, const char *pre, const char *post) {
     Node *c = s->a;
+    t->c.printing++;
     for (int j = 0; j < c->n[0]; j++) {
         Node *a = c->l[0][j];
         if (a->kind == E_STARRED) terr(t, a->line, "* arguments are not available in a checked file");
@@ -3234,6 +3620,7 @@ static void top_print(T *t, Node *s, const char *pre, const char *post) {
             o_put(&t->out, s->line, af("_ = %s(the String %s \xE2\x88\xB7 [])%s\n", pre, E(t, a->a), post));
         } else if (a->kind != E_CONST) o_put(&t->out, s->line, af("_ = %s(%s \xE2\x88\xB7 [])%s\n", pre, E(t, a), post));
     }
+    t->c.printing--;
 }
 
 static bool is_print(T *t, Node *s) {
@@ -3299,9 +3686,11 @@ static void toplevel(T *t, Node **l, int n) {
         }
         case S_EXPR:
             if (s->a->kind == E_CONST) break;
-            if (!is_print(t, s)) terr(t, s->line, "the only expression statement at the top level of a checked file is a call to print");
+            if (s->a->kind != E_CALL)
+                terr(t, s->line, "an expression statement at the top level of a checked file is a call");
             begin_executed(t, s);
-            top_print(t, s, "", "");
+            if (is_print(t, s)) top_print(t, s, "", "");
+            else o_put(&t->out, s->line, af("_ = %s\n", E(t, s->a)));
             break;
         case S_FOR:
             begin_executed(t, s);
@@ -3722,8 +4111,9 @@ static T *check_module(Node *m, const char *filename, bool main) {
     if (!*report) report = af("agda failed with exit status %d and no message", status);
     for (int i = 0; i < t->nauto; i++)
         if (t->auto_lines[i] == first && strstr(report, "when checking that the expression refl has type")) {
-            report = af("%s\nxs[i] needs i < len(xs), d[k] needs k in d, and // and %% need a divisor that is not 0. "
-                        "The checker cannot see that the one on this line holds. Put the code under an 'if' that tests it.", report);
+            report = af("%s\nThe checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), "
+                        "d[k] needs k in d, // and %% need a divisor that is not 0, and an assert inside a function needs "
+                        "its condition. Put the code under an 'if' that tests it.", report);
             break;
         }
     check_fail(filename, first, report);

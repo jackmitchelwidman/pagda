@@ -1,3 +1,0 @@
-  File "tests/rejected/print_inside.py", line 17
-    print(n)
-TypeCheckError: an expression used as a statement is not available inside a checked function. A checked function is built from assignments, if, match, for, while and return.

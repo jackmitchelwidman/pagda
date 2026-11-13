@@ -2,4 +2,4 @@
     return d[k]
 TypeCheckError: (hasKey k (items d)) != true of type Bool
 when checking that the expression refl has type has d k ≡ true
-xs[i] needs i < len(xs), d[k] needs k in d, and // and % need a divisor that is not 0. The checker cannot see that the one on this line holds. Put the code under an 'if' that tests it.
+The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.
