@@ -1,3 +1,7 @@
   File "tests/rejected/negative.py", line 16
     x: Nat = -1
-TypeCheckError: negative numbers are not available in a checked file; Nat starts at 0
+TypeCheckError: Int !=< Nat
+when checking that the inferred type of an application
+  Int
+matches the expected type
+  Nat

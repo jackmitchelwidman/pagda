@@ -1,0 +1,5 @@
+  File "tests/rejected/dict_equal.py", line 6
+    return a == b
+TypeCheckError: No instance of type Eq₀ (Dict String Int) was found in scope.
+when checking that a b are valid arguments to a function of type
+{A : Set} ⦃ r : Eq₀ A ⦄ → A → A → Bool

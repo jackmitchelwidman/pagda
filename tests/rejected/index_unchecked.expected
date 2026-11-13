@@ -1,0 +1,5 @@
+  File "tests/rejected/index_unchecked.py", line 6
+    return xs[i]
+TypeCheckError: (i < len xs) != true of type Bool
+when checking that the expression refl has type (i < len xs) ≡ true
+xs[i] needs i < len(xs), d[k] needs k in d, and // and % need a divisor that is not 0. The checker cannot see that the one on this line holds. Put the code under an 'if' that tests it.

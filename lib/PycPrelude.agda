@@ -10,8 +10,13 @@ open import Agda.Builtin.Nat public using (Nat; zero; suc; _+_; _*_)
 open import Agda.Builtin.Bool public using (Bool; true; false)
 open import Agda.Builtin.String public using (String)
 open import Agda.Builtin.Equality public using (_≡_; refl)
+open import Agda.Builtin.Int public using (Int; pos; negsuc)
+open import Agda.Builtin.List public using (List; []; _∷_)
+open import Agda.Builtin.Sigma public using (Σ; _,_; fst; snd)
+open import Agda.Builtin.Unit public using (⊤; tt)
 import Agda.Builtin.Nat as N
 import Agda.Builtin.String as S
+import Agda.Builtin.Int as I
 
 the : ∀ {ℓ} (@0 A : Set ℓ) → A → A
 the A x = x
@@ -78,6 +83,7 @@ _<_ : Nat → Nat → Bool
 _<_ = N._<_
 -- Error messages show a comparison as written.
 {-# DISPLAY N._<_ a b = a < b #-}
+{-# DISPLAY N._==_ a b = a == b #-}
 _<=_ : Nat → Nat → Bool
 a <= b = not (b < a)
 
@@ -106,5 +112,316 @@ pred zero = zero
 pred (suc n) = n
 monus : Nat → Nat → Nat
 monus = N._-_
+{-# DISPLAY N._-_ a b = monus a b #-}
 concat : String → String → String
 concat = S.primStringAppend
+
+-- ---------------------------------------------------------------------------
+-- Facts about conditions. A test `if c:` hands each branch a proof of c ≡ true or
+-- c ≡ false; these turn one form into another.
+notFalse : {c : Bool} → c ≡ false → not c ≡ true
+notFalse refl = refl
+notTrue : {c : Bool} → c ≡ true → not c ≡ false
+notTrue refl = refl
+unNot : {c : Bool} → not c ≡ true → c ≡ false
+unNot {false} p = refl
+-- if with a proof for each branch, for use inside an expression
+ifd : ∀ {ℓ} {@0 A : Set ℓ} (c : Bool) → (c ≡ true → A) → (c ≡ false → A) → A
+ifd true a b = a refl
+ifd false a b = b refl
+case₀_of_ : ∀ {a b} {@0 A : Set a} {@0 B : Set b} → A → (A → B) → B
+case₀ x of f = f x
+
+-- ---------------------------------------------------------------------------
+-- int: whole numbers of either sign. pos n is n, negsuc n is -(n + 1).
+natSub : Nat → Nat → Int
+natSub n zero = pos n
+natSub zero (suc m) = negsuc m
+natSub (suc n) (suc m) = natSub n m
+negᵢ : Int → Int
+negᵢ (pos zero) = pos zero
+negᵢ (pos (suc n)) = negsuc n
+negᵢ (negsuc n) = pos (suc n)
+_+ᵢ_ : Int → Int → Int
+pos a +ᵢ pos b = pos (a + b)
+pos a +ᵢ negsuc b = natSub a (suc b)
+negsuc a +ᵢ pos b = natSub b (suc a)
+negsuc a +ᵢ negsuc b = negsuc (suc (a + b))
+_-ᵢ_ : Int → Int → Int
+a -ᵢ b = a +ᵢ negᵢ b
+_*ᵢ_ : Int → Int → Int
+pos a *ᵢ pos b = pos (a * b)
+pos a *ᵢ negsuc b = negᵢ (pos (a * suc b))
+negsuc a *ᵢ pos b = negᵢ (pos (suc a * b))
+negsuc a *ᵢ negsuc b = pos (suc a * suc b)
+_<ᵢ_ : Int → Int → Bool
+pos a <ᵢ pos b = a < b
+pos a <ᵢ negsuc b = false
+negsuc a <ᵢ pos b = true
+negsuc a <ᵢ negsuc b = b < a
+_<=ᵢ_ : Int → Int → Bool
+a <=ᵢ b = not (b <ᵢ a)
+absᵢ : Int → Nat
+absᵢ (pos n) = n
+absᵢ (negsuc n) = suc n
+-- to_nat(x): x when it is 0 or more, else 0
+toNat : Int → Nat
+toNat (pos n) = n
+toNat (negsuc n) = zero
+eqInt : Int → Int → Bool
+eqInt (pos a) (pos b) = a N.== b
+eqInt (negsuc a) (negsuc b) = a N.== b
+eqInt _ _ = false
+instance
+  EqInt : Eq₀ Int
+  EqInt = record { _==_ = eqInt }
+{-# DISPLAY eqInt a b = a == b #-}
+
+-- // and % as Python defines them: the quotient is rounded down, and the remainder
+-- has the sign of the divisor. Each takes a proof that the divisor is not 0.
+divNat : (a b : Nat) → (b == 0) ≡ false → Nat
+divNat a zero ()
+divNat a (suc m) p = N.div-helper 0 m a m
+modNat : (a b : Nat) → (b == 0) ≡ false → Nat
+modNat a zero ()
+modNat a (suc m) p = N.mod-helper 0 m a m
+divInt : (a b : Int) → (b == pos 0) ≡ false → Int
+divInt a (pos zero) ()
+divInt (pos n) (pos (suc m)) p = pos (N.div-helper 0 m n m)
+divInt (pos n) (negsuc m) p = negᵢ (pos (N.div-helper 0 m (n + m) m))
+divInt (negsuc n) (pos (suc m)) p = negᵢ (pos (N.div-helper 0 m (suc n + m) m))
+divInt (negsuc n) (negsuc m) p = pos (N.div-helper 0 m (suc n) m)
+modInt : (a b : Int) → (b == pos 0) ≡ false → Int
+modInt a b p = a -ᵢ (b *ᵢ divInt a b p)
+powNat : Nat → Nat → Nat
+powNat a zero = 1
+powNat a (suc n) = a * powNat a n
+powInt : Int → Nat → Int
+powInt a zero = pos 1
+powInt a (suc n) = a *ᵢ powInt a n
+minNat : Nat → Nat → Nat
+minNat a b = if b < a then b else a
+maxNat : Nat → Nat → Nat
+maxNat a b = if a < b then b else a
+minInt : Int → Int → Int
+minInt a b = if b <ᵢ a then b else a
+maxInt : Int → Int → Int
+maxInt a b = if a <ᵢ b then b else a
+showNat : Nat → String
+showNat = S.primShowNat
+showInt : Int → String
+showInt = I.primShowInteger
+
+-- ---------------------------------------------------------------------------
+-- tuple[A, B] is A × B. A longer tuple nests to the right: (a , (b , c)).
+_×_ : ∀ {a b} → Set a → Set b → Set (a ⊔ b)
+A × B = Σ A (λ _ → B)
+infixr 2 _×_
+instance
+  EqPair : ∀ {A B : Set} {{_ : Eq₀ A}} {{_ : Eq₀ B}} → Eq₀ (A × B)
+  EqPair = record { _==_ = λ { (a , b) (c , d) → (a == c) ∧ (b == d) } }
+  EqUnit : Eq₀ ⊤
+  EqUnit = record { _==_ = λ _ _ → true }
+
+-- ---------------------------------------------------------------------------
+-- list[A]
+len : ∀ {a} {@0 A : Set a} → List A → Nat
+len [] = 0
+len (x ∷ xs) = suc (len xs)
+_++_ : ∀ {a} {@0 A : Set a} → List A → List A → List A
+[] ++ ys = ys
+(x ∷ xs) ++ ys = x ∷ (xs ++ ys)
+infixr 5 _++_
+mapL : ∀ {a b} {@0 A : Set a} {@0 B : Set b} → (A → B) → List A → List B
+mapL f [] = []
+mapL f (x ∷ xs) = f x ∷ mapL f xs
+concatMap : ∀ {a b} {@0 A : Set a} {@0 B : Set b} → (A → List B) → List A → List B
+concatMap f [] = []
+concatMap f (x ∷ xs) = f x ++ concatMap f xs
+eqList : {A : Set} {{_ : Eq₀ A}} → List A → List A → Bool
+eqList [] [] = true
+eqList (x ∷ xs) (y ∷ ys) = (x == y) ∧ eqList xs ys
+eqList _ _ = false
+instance
+  EqList : {A : Set} {{_ : Eq₀ A}} → Eq₀ (List A)
+  EqList = record { _==_ = eqList }
+elem : {A : Set} {{_ : Eq₀ A}} → A → List A → Bool
+elem x [] = false
+elem x (y ∷ ys) = (x == y) ∨ elem x ys
+-- xs[i], with a proof that i is inside the list
+index : ∀ {a} {@0 A : Set a} (xs : List A) (i : Nat) → (i < len xs) ≡ true → A
+index [] i ()
+index (x ∷ xs) zero p = x
+index (x ∷ xs) (suc i) p = index xs i p
+-- xs[i] = v
+setAt : ∀ {a} {@0 A : Set a} (xs : List A) (i : Nat) → A → (i < len xs) ≡ true → List A
+setAt [] i v ()
+setAt (x ∷ xs) zero v p = v ∷ xs
+setAt (x ∷ xs) (suc i) v p = x ∷ setAt xs i v p
+take : ∀ {a} {@0 A : Set a} → Nat → List A → List A
+take zero xs = []
+take (suc n) [] = []
+take (suc n) (x ∷ xs) = x ∷ take n xs
+drop : ∀ {a} {@0 A : Set a} → Nat → List A → List A
+drop zero xs = xs
+drop (suc n) [] = []
+drop (suc n) (x ∷ xs) = drop n xs
+-- xs[a:b]
+slice : ∀ {a} {@0 A : Set a} → Nat → Nat → List A → List A
+slice a b xs = take (monus b a) (drop a xs)
+-- the numbers a, a + 1, ... of which there are n
+countFrom : Nat → Nat → List Nat
+countFrom a zero = []
+countFrom a (suc n) = a ∷ countFrom (suc a) n
+range₁ : Nat → List Nat
+range₁ n = countFrom 0 n
+range₂ : Nat → Nat → List Nat
+range₂ a b = countFrom a (monus b a)
+revOnto : ∀ {a} {@0 A : Set a} → List A → List A → List A
+revOnto acc [] = acc
+revOnto acc (x ∷ xs) = revOnto (x ∷ acc) xs
+reverse : ∀ {a} {@0 A : Set a} → List A → List A
+reverse = revOnto []
+enumFrom : ∀ {a} {@0 A : Set a} → Nat → List A → List (Nat × A)
+enumFrom n [] = []
+enumFrom n (x ∷ xs) = (n , x) ∷ enumFrom (suc n) xs
+zip : ∀ {a b} {@0 A : Set a} {@0 B : Set b} → List A → List B → List (A × B)
+zip (x ∷ xs) (y ∷ ys) = (x , y) ∷ zip xs ys
+zip _ _ = []
+sumNat : List Nat → Nat
+sumNat [] = 0
+sumNat (x ∷ xs) = x + sumNat xs
+sumInt : List Int → Int
+sumInt [] = pos 0
+sumInt (x ∷ xs) = x +ᵢ sumInt xs
+anyL : List Bool → Bool
+anyL [] = false
+anyL (x ∷ xs) = x ∨ anyL xs
+allL : List Bool → Bool
+allL [] = true
+allL (x ∷ xs) = x ∧ allL xs
+insertBy : ∀ {a} {@0 A : Set a} → (A → A → Bool) → A → List A → List A
+insertBy lt x [] = x ∷ []
+insertBy lt x (y ∷ ys) with lt x y
+... | true = x ∷ y ∷ ys
+... | false = y ∷ insertBy lt x ys
+sortBy : ∀ {a} {@0 A : Set a} → (A → A → Bool) → List A → List A
+sortBy lt [] = []
+sortBy lt (x ∷ xs) = insertBy lt x (sortBy lt xs)
+sortedNat : List Nat → List Nat
+sortedNat = sortBy _<_
+sortedInt : List Int → List Int
+sortedInt = sortBy _<ᵢ_
+strLen : String → Nat
+strLen s = len (S.primStringToList s)
+
+-- ---------------------------------------------------------------------------
+-- dict[K, V]: keys in the order they were first added, each with its value.
+record Dict (K V : Set) : Set where
+  constructor mkDict
+  field items : List (K × V)
+open Dict public
+hasKey : {K V : Set} {{_ : Eq₀ K}} → K → List (K × V) → Bool
+hasKey k [] = false
+hasKey k ((k′ , v) ∷ r) = (k == k′) ∨ hasKey k r
+has : {K V : Set} {{_ : Eq₀ K}} → Dict K V → K → Bool
+has d k = hasKey k (items d)
+getOr : {K V : Set} {{_ : Eq₀ K}} → K → V → List (K × V) → V
+getOr k v [] = v
+getOr k v ((k′ , v′) ∷ r) with k == k′
+... | true = v′
+... | false = getOr k v r
+dget : {K V : Set} {{_ : Eq₀ K}} → Dict K V → K → V → V
+dget d k v = getOr k v (items d)
+lookupKey : {K V : Set} {{_ : Eq₀ K}} (k : K) (r : List (K × V)) → hasKey k r ≡ true → V
+lookupKey k [] ()
+lookupKey k ((k′ , v) ∷ r) p with k == k′
+... | true = v
+... | false = lookupKey k r p
+dindex : {K V : Set} {{_ : Eq₀ K}} (d : Dict K V) (k : K) → has d k ≡ true → V
+dindex d k p = lookupKey k (items d) p
+putKey : {K V : Set} {{_ : Eq₀ K}} → K → V → List (K × V) → List (K × V)
+putKey k v [] = (k , v) ∷ []
+putKey k v ((k′ , v′) ∷ r) with k == k′
+... | true = (k′ , v) ∷ r
+... | false = (k′ , v′) ∷ putKey k v r
+dset : {K V : Set} {{_ : Eq₀ K}} → Dict K V → K → V → Dict K V
+dset d k v = mkDict (putKey k v (items d))
+-- a dict written out: later items with the same key replace the value and keep the place
+dictFrom : {K V : Set} {{_ : Eq₀ K}} → Dict K V → List (K × V) → Dict K V
+dictFrom d [] = d
+dictFrom d ((k , v) ∷ r) = dictFrom (dset d k v) r
+dictOf : {K V : Set} {{_ : Eq₀ K}} → List (K × V) → Dict K V
+dictOf = dictFrom (mkDict [])
+dlen : {K V : Set} → Dict K V → Nat
+dlen d = len (items d)
+dkeys : {K V : Set} → Dict K V → List K
+dkeys d = mapL fst (items d)
+dvalues : {K V : Set} → Dict K V → List V
+dvalues d = mapL snd (items d)
+
+-- ---------------------------------------------------------------------------
+-- Loops. The names a loop assigns travel through it as one value, the state.
+-- The body says what happens next: go on, leave the loop, or return from the function.
+data Step {r s} (R : Set r) (S : Set s) : Set (r ⊔ s) where
+  next : S → Step R S
+  stop : S → Step R S
+  ret : R → Step R S
+data Out {r s} (R : Set r) (S : Set s) : Set (r ⊔ s) where
+  out : S → Out R S
+  early : R → Out R S
+-- a loop with no return inside can only finish with its state
+runLoop : ∀ {s} {S : Set s} → Out ⊥ S → S
+runLoop (out s) = s
+forEach : ∀ {a r s} {@0 A : Set a} {R : Set r} {S : Set s} → List A → S → (A → S → Step R S) → Out R S
+forEach [] s f = out s
+forEach (x ∷ xs) s f with f x s
+... | next s′ = forEach xs s′ f
+... | stop s′ = out s′
+... | ret r = early r
+
+lt-zero : ∀ {ℓ} {@0 A : Set ℓ} (n : Nat) → (n < 0) ≡ true → A
+lt-zero n ()
+lt-suc : (n : Nat) → (n < suc n) ≡ true
+lt-suc zero = refl
+lt-suc (suc n) = lt-suc n
+lt-step : (a b f : Nat) → (a < b) ≡ true → (b < suc f) ≡ true → (a < f) ≡ true
+lt-step a zero f () q
+lt-step a (suc b) zero p q = lt-zero b q
+lt-step zero (suc b) (suc f) p q = refl
+lt-step (suc a) (suc b) (suc f) p q = lt-step a b f p q
+lt-add : (i k : Nat) → (i < (i + suc k)) ≡ true
+lt-add zero k = refl
+lt-add (suc i) k = lt-add i k
+add-suc : (i k : Nat) → (i + suc k) ≡ (suc i + k)
+add-suc zero k = refl
+add-suc (suc i) k = cong (fun₁ suc) (add-suc i k)
+
+-- for i in range(n): the body also gets the proof that i is below n
+forUpTo : ∀ {r s} {R : Set r} {S : Set s} (k i n : Nat) → (i + k) ≡ n → S
+          → ((j : Nat) → (j < n) ≡ true → S → Step R S) → Out R S
+forUpTo zero i n e s f = out s
+forUpTo (suc k) i n e s f with f i (subst (fun₁ (λ m → (i < m) ≡ true)) e (lt-add i k)) s
+... | next s′ = forUpTo k (suc i) n (trans (sym (add-suc i k)) e) s′ f
+... | stop s′ = out s′
+... | ret r = early r
+forRange : ∀ {r s} {R : Set r} {S : Set s} (n : Nat) → S → ((i : Nat) → (i < n) ≡ true → S → Step R S) → Out R S
+forRange n s f = forUpTo n 0 n refl s f
+
+-- while c: the body must end with a proof that the measure went down
+data WStep {r s} (R : Set r) (S : Set s) (m : S → Nat) (s₀ : S) : Set (r ⊔ s) where
+  wnext : (s′ : S) → (m s′ < m s₀) ≡ true → WStep R S m s₀
+  wstop : S → WStep R S m s₀
+  wret : R → WStep R S m s₀
+whileFuel : ∀ {r s} {R : Set r} {S : Set s} (fuel : Nat) (c : S → Bool) (m : S → Nat) (s₀ : S)
+            → ((s : S) → c s ≡ true → WStep R S m s) → (m s₀ < fuel) ≡ true → Out R S
+whileFuel zero c m s₀ body p = lt-zero (m s₀) p
+whileFuel (suc f) c m s₀ body p with c s₀ in eq
+... | false = out s₀
+... | true with body s₀ eq
+...   | wnext s′ q = whileFuel f c m s′ body (lt-step (m s′) (m s₀) f q p)
+...   | wstop s′ = out s′
+...   | wret r = early r
+whileDo : ∀ {r s} {R : Set r} {S : Set s} (c : S → Bool) (m : S → Nat) (s₀ : S)
+          → ((s : S) → c s ≡ true → WStep R S m s) → Out R S
+whileDo c m s₀ body = whileFuel (suc (m s₀)) c m s₀ body (lt-suc (m s₀))

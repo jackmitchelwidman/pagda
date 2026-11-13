@@ -1,0 +1,5 @@
+  File "tests/rejected/while_wrong_proof.py", line 9
+    decreases(monus(n, i), refl())
+TypeCheckError: (monus n i₁ < monus n i) != true of type Bool
+when checking that the expression refl has type
+((λ { i → monus n i }) i₁ < (λ { i → monus n i }) i) ≡ true

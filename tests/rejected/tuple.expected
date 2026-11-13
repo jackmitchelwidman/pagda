@@ -1,3 +1,0 @@
-  File "tests/rejected/tuple.py", line 17
-    pair = (n, n)
-TypeCheckError: tuples, lists, sets and dicts are not available in a checked file; declare a Data type

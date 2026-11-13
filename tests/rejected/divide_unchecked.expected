@@ -1,0 +1,6 @@
+  File "tests/rejected/divide_unchecked.py", line 6
+    return a // b
+TypeCheckError: (b == pos 0) != false of type Bool
+when checking that the expression refl has type
+(b == pos 0) ≡ false
+xs[i] needs i < len(xs), d[k] needs k in d, and // and % need a divisor that is not 0. The checker cannot see that the one on this line holds. Put the code under an 'if' that tests it.

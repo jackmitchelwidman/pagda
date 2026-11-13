@@ -1,0 +1,4 @@
+  File "tests/rejected/loop_state_type.py", line 8
+    acc = [x]
+TypeCheckError: (List Int) !=< Nat
+when checking that the expression acc₁ has type Nat

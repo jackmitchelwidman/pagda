@@ -1,0 +1,4 @@
+  File "tests/rejected/int_plus_str.py", line 6
+    return n + "a"
+TypeCheckError: String != Int
+when checking that the expression "a" has type Int

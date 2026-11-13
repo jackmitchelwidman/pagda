@@ -1,0 +1,4 @@
+  File "tests/rejected/bool_is_one.py", line 5
+    assert True == 1
+TypeCheckError: Nat != Bool
+when checking that the expression 1 has type Bool

@@ -18,7 +18,9 @@ most things here are small. It runs the same under python3 and pyc.
 
 __all__ = ["Type", "Nat", "Data", "constructor", "Callable", "Eq", "Refl", "refl", "suc", "pred", "monus",
            "concat", "sym", "trans", "cong", "subst", "Empty", "absurd", "unreachable", "Fn", "Dec", "Yes", "No",
-           "decide"]
+           "decide", "to_nat", "known", "decreases", "hole", "dataclass", "trusted"]
+
+from dataclasses import dataclass
 
 Type = type
 Nat = int
@@ -153,3 +155,34 @@ def unreachable():
     """Written as "case _: return unreachable()" where no value can arrive. The type
     checker accepts it only when that is so."""
     raise AssertionError("unreachable() was reached")
+
+
+def to_nat(x):
+    """An int as a Nat: x when it is 0 or more, and 0 for a negative x."""
+    return x if x > 0 else 0
+
+
+def known(condition):
+    """Inside "if c:" or "while c:", known(c) is the proof that c is true. In the
+    else part, known(not c) is the proof for the other way."""
+    assert condition, "known() was given a condition that is false"
+    return Refl()
+
+
+def decreases(measure, proof):
+    """The last statement of a while loop in a checked file. The measure is a Nat
+    worked out from the loop's variables. The proof shows that it is smaller at the
+    end of a pass than at the start, which is how the checker knows the loop ends."""
+
+
+def hole():
+    """A gap left to fill in later. The type checker reports what is needed there,
+    and a file with a hole does not run under pyc."""
+    raise AssertionError("hole() was reached: this part of the program is not written yet")
+
+
+def trusted(fn):
+    """Marks a def whose body the type checker does not read. Its annotations are
+    taken on trust, and so is the promise that the same arguments always give the
+    same result."""
+    return fn

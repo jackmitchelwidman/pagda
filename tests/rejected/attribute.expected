@@ -1,3 +1,3 @@
   File "tests/rejected/attribute.py", line 17
     return xs.head
-TypeCheckError: attribute access is not available in a checked file; use match to take a value apart
+TypeCheckError: attribute access is available on a value whose class the checker knows. Give the value a type annotation, or use match to take a Data value apart.

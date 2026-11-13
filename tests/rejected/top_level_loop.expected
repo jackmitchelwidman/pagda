@@ -1,3 +1,0 @@
-  File "tests/rejected/top_level_loop.py", line 16
-    for i in range(3):
-TypeCheckError: a loop is not available at the top level of a checked file. The top level holds imports, Data classes, defs, assignments, print and assert.
