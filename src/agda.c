@@ -944,6 +944,30 @@ static bool has_split(K *k) {
     return false;
 }
 
+/* Whether the statements match on `name` or compare it with zero. */
+static bool splits_on(Node **l, int n, Str *name) {
+    for (int i = 0; i < n; i++) {
+        Node *s = l[i];
+        bool z;
+        if (s->kind == S_IF) {
+            Node *x = zero_test(s->a, &z);
+            if (x && x->kind == E_BINOP) x = x->a;
+            if (x && str_eq(AS_STR(x->val), name)) return true;
+            if (splits_on(s->l[0], s->n[0], name) || splits_on(s->l[1], s->n[1], name)) return true;
+        } else if (s->kind == S_MATCH) {
+            if (s->a->kind == E_NAME && str_eq(AS_STR(s->a->val), name)) return true;
+            for (int j = 0; j < s->n[0]; j++) if (splits_on(s->l[0][j]->l[0], s->l[0][j]->n[0], name)) return true;
+        } else if ((s->kind == S_ASSIGN && s->a->kind == E_NAME && str_eq(AS_STR(s->a->val), name)) ||
+                   (s->kind == S_ANNASSIGN && s->b && s->b->kind == E_NAME && str_eq(AS_STR(s->b->val), name)))
+            return true;   /* another name for it, which may be split on in turn */
+    }
+    return false;
+}
+static bool k_splits_on(K *k, Str *name) {
+    for (k = k_norm(k); k; k = k->next) if (splits_on(k->l + k->i, k->n - k->i, name)) return true;
+    return false;
+}
+
 static void add_local(T *t, Str *name) {
     if (!name) return;
     for (int i = 0; i < t->c.nlocals; i++) if (str_eq(t->c.locals[i], name)) return;
@@ -1170,11 +1194,17 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
                     lhs = af("%s | %s", lhs, fresh(t, "_"));
                 }
                 bind(t, name, e, true, nat, s->line);
-            } else {
+            } else if (k_splits_on(rest, name)) {
+                /* The name is taken apart later, so it has to be a variable of the
+                   left-hand side: a column. */
                 const char *a = lhs_var(t, fresh(t, name->s));
                 o_put(t->cur, s->line, ann ? af("%s with the %s %s\n", lhs, tr_type(t, ann), e) : af("%s with %s\n", lhs, e));
                 lhs = af("%s | %s", lhs, a);
                 bind(t, name, a, true, ann_is_nat(t, ann), s->line);
+            } else {
+                /* Otherwise the name stands for its expression, so Agda still sees that
+                   the two are the same thing. */
+                bind(t, name, ann ? af("(the %s %s)", tr_type(t, ann), e) : e, false, false, s->line);
             }
             k = rest;
             continue;

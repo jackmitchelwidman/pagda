@@ -142,6 +142,56 @@ def gap_or_zero(a: Nat, b: Nat) -> Nat:
             return 0
 
 
+# larger(a, b) is at least a. Each case needs a fact about < that decide's proof supplies.
+def lt_irrefl(a: Nat) -> (a < a) == False:
+    if a == 0:
+        return refl()
+    return lt_irrefl(a - 1)
+
+
+def lt_asym(a: Nat, b: Nat, p: (a < b) == True) -> (b < a) == False:
+    if a == 0:
+        if b == 0:
+            return refl()
+        return refl()
+    if b == 0:
+        return absurd(true_is_not_false(sym(p)))
+    return lt_asym(a - 1, b - 1, p)
+
+
+def larger_ge(a: Nat, b: Nat) -> (a <= larger(a, b)) == True:
+    match decide(a < b):
+        case Yes(p):
+            return cong(lambda c: not c, lt_asym(a, b, p))
+        case No(_):
+            return cong(lambda c: not c, lt_irrefl(a))
+
+
+# A local name before an if still stands for its expression.
+def doubled(n: Nat) -> Vec[Nat, n + n]:
+    m = n + n
+    if m < 3:
+        return zeros(m)
+    return zeros(n + n)
+
+
+# Recursion under a condition.
+def climb(a: Nat, b: Nat) -> Nat:
+    if a == 0:
+        return b
+    if b < a:
+        return climb(a - 1, b)
+    return climb(a - 1, b + 1)
+
+
+def keep(f: Fn[k: Nat, Vec[Nat, k]]) -> Fn[k: Nat, Vec[Nat, k]]:
+    g: Fn[k: Nat, Vec[Nat, k]] = f
+    return g
+
+
+maker: Fn[k: Nat, Vec[Nat, k]] = keep(zeros)
+
+
 def as_value(c: bool) -> Dec[c]:
     return decide(c)
 
@@ -152,5 +202,6 @@ print(twice(lambda k: k + 3, 1), compose(suc, suc)(5), constant(9)())
 print(pick(count), some_vec(2))
 print(larger(2, 5), larger_is_one(2, 5), larger_is_one(5, 2), and_comm(True, False))
 print(larger_when_less(1, 2, refl()), gap_or_zero(3, 10), gap_or_zero(10, 3), as_value(True), as_value(False))
+print(larger_ge(2, 5), larger_ge(5, 2), doubled(1), doubled(2), climb(3, 1), maker(1))
 assert larger(3, 7) == 7
 assert length(build(zeros, 4)) == 8

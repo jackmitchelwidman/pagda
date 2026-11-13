@@ -140,6 +140,7 @@ The same file runs under `python3` 3.12 or newer with `lib/dependent.py` beside 
 - **A proof of the condition:** `match decide(c):` with `case Yes(p):` and `case No(p):` does the same, and `p` is a proof of `c == True` or `c == False` to pass on to a function that asks for one.
 - **Proofs:** in an annotation, `a == b` is the type of proofs that `a` equals `b`. `refl()` proves a thing equals itself. `sym`, `trans`, `cong` and `subst` combine proofs, and `match p: case Refl():` uses one.
 - **Impossible cases:** `case _: return unreachable()` is accepted only when Agda can see that no value reaches it.
+- **Names taken by `dependent`:** `from dependent import *` brings in every name of the module, including `Fn`, `Dec`, `Yes`, `No` and `decide`. A file that defines its own `Yes` has to import the names it uses one by one.
 - **Top level:** `name: T = value`, `print(...)`, and `assert`. An `assert` is checked by Agda before the program runs. A final `if __name__ == "__main__":` block may hold the same three.
 
 ### What the check covers, and what it does not
