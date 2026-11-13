@@ -235,7 +235,7 @@ static const char *const reserved[] = {
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
     "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
     "findKey", "dfind", "chars", "unchars", "strIndex", "strSlice", "strTake", "strDrop", "strChars", "isPrefix", "startsWith", "endsWith",
-    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
+    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "ltAsym", "ltLower", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
     "popped", "insertAt", "rangeInt", "Char", "ltNotZero", "posNotZero", "negNotZero", "sucs", "ltSucs", "monusUp", "intDown", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
     "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
@@ -1082,6 +1082,7 @@ static const char *minus_proof(T *t, Node *n, const char *a, const char *b) {
     const char *p = fact_proof(t, af("(%s < %s)", a, b), false);
     if (p) return p;
     if (!strcmp(b, "1") && (p = fact_proof(t, af("(0 < %s)", a), true))) return af("(posNotBelowOne {%s} %s)", a, p);
+    if ((p = fact_proof(t, af("(%s < %s)", b, a), true))) return af("(ltAsym %s %s %s)", b, a, p);   /* b < a, so not a < b */
     return auto_refl(t, n->line);
 }
 
@@ -1566,9 +1567,28 @@ static const char *fun_type(T *t, Node **args, int np, Node *res, int line) {
 /* The proof that index `ix` is inside something of length `n` (both Agda text): a
    test in scope of that very thing, or of a later index, since i + 1 < n gives
    i < n; else refl, which is enough when Agda can work it out. */
+static const char *lower_bound(T *t, const char *k, const char *n) {
+    /* a number written out: a test against a larger number covers it, as
+       len(xs) > 1 covers xs[0] */
+    if (!*k || strspn(k, "0123456789") != strlen(k) || strlen(k) > 9) return NULL;
+    const char *tail = af(" < %s)", n);
+    size_t tl = strlen(tail);
+    for (Var *v = t->c.env; v; v = v->next) {
+        if (!v->fact || !v->fpol) continue;
+        size_t fl = strlen(v->fact);
+        if (fl <= tl + 1 || strcmp(v->fact + fl - tl, tail) != 0) continue;
+        const char *m = af("%.*s", (int)(fl - tl - 1), v->fact + 1);
+        if (!*m || strspn(m, "0123456789") != strlen(m) || strlen(m) > 9 || atol(m) < atol(k)) continue;
+        if (v->fid) t->fact_used[v->fid] = true;
+        return af("(ltLower %s %s %s refl %s)", k, m, n, v->term);
+    }
+    return NULL;
+}
+
 static const char *bound_proof(T *t, const char *ix, const char *n, int line) {
     const char *p = fact_proof(t, af("(%s < %s)", ix, n), true);
     if (p) return p;
+    if ((p = lower_bound(t, ix, n))) return p;
     if ((p = fact_proof(t, af("((suc %s) < %s)", ix, n), true))) return af("(ltDown %s %s %s)", ix, n, p);
     if ((p = fact_proof(t, af("((suc (suc %s)) < %s)", ix, n), true)))
         return af("(ltDown %s %s (ltDown (suc %s) %s %s))", ix, n, ix, n, p);
@@ -1610,8 +1630,7 @@ static const char *index_expr(T *t, Node *n) {
     case TK_LIST: {
         const char *base = ER(t, n->a, NULL);
         if (last) {
-            const char *p = fact_proof(t, af("(0 < (len %s))", base), true);
-            return af("(lastOf %s %s)", base, p ? p : auto_refl(t, n->line));
+            return af("(lastOf %s %s)", base, bound_proof(t, "0", af("(len %s)", base), n->line));
         }
         if (i->kind == E_SLICE) {
             if (i->c) terr(t, n->line, "a slice with a step is not available in a checked file");
@@ -2805,8 +2824,7 @@ static const char *mutation(T *t, Node *s, Var **var) {
             return "(dictOf [])";
         }
         if (str_eqc(m, "pop")) {
-            const char *p = fact_proof(t, af("(0 < (len %s))", x), true);
-            return af("(popped %s %s)", x, p ? p : auto_refl(t, s->line));
+            return af("(popped %s %s)", x, bound_proof(t, "0", af("(len %s)", x), s->line));
         }
         if (str_eqc(m, "insert")) {
             if (tk(ty_of(t, a[0])) == TK_INT) terr(t, s->line, "the place given to insert is a Nat in a checked file");
@@ -2897,8 +2915,7 @@ static const char *pop_parts(T *t, Node *s, Var **list, const char **shorter) {
         terr(t, s->line, "'%s' may be shared here: it is a parameter, or it came from a call, or it was given another "
                          "name, passed on or put inside another value. A shared list or dict cannot be changed in place, "
                          "because the other holder would see the change. Make a copy first: %s = list(%s)", v->py->s, v->py->s, v->py->s);
-    const char *p = fact_proof(t, af("(0 < (len %s))", v->term), true);
-    if (!p) p = auto_refl(t, s->line);
+    const char *p = bound_proof(t, "0", af("(len %s)", v->term), s->line);
     *list = v;
     *shorter = af("(popped %s %s)", v->term, p);
     return af("(lastOf %s %s)", v->term, p);

@@ -643,3 +643,14 @@ andLeft : {a b : Bool} → (a ∧ b) ≡ true → a ≡ true
 andLeft {true} p = refl
 andRight : {a b : Bool} → (a ∧ b) ≡ true → b ≡ true
 andRight {true} p = p
+ltAsym : (a b : Nat) → (a < b) ≡ true → (b < a) ≡ false
+ltAsym zero zero ()
+ltAsym zero (suc b) p = refl
+ltAsym (suc a) zero ()
+ltAsym (suc a) (suc b) p = ltAsym a b p
+ltLower : (k m n : Nat) → (m < k) ≡ false → (m < n) ≡ true → (k < n) ≡ true
+ltLower zero m zero p ()
+ltLower zero m (suc n) p q = refl
+ltLower (suc k) zero n () q
+ltLower (suc k) (suc m) zero p ()
+ltLower (suc k) (suc m) (suc n) p q = ltLower k m n p q
