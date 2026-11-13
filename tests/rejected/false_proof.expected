@@ -1,0 +1,4 @@
+  File "tests/rejected/false_proof.py", line 17
+    return refl()
+TypeCheckError: suc n != n of type Nat
+when checking that the expression refl has type suc n ≡ n

@@ -1,0 +1,5 @@
+  File "tests/rejected/ambiguous.py", line 16
+    print(Nil())
+TypeCheckError: Agda could not work out a type here. Add a type annotation.
+Unsolved metas at the following locations:
+  line 16

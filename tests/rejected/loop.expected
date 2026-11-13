@@ -1,0 +1,3 @@
+  File "tests/rejected/loop.py", line 17
+    while n:
+TypeCheckError: a loop is not available inside a checked function. A checked function is built from assignments, if, match and return.

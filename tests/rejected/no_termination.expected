@@ -1,0 +1,8 @@
+  File "tests/rejected/no_termination.py", line 16
+    def f(n: Nat) -> Nat:
+TypeCheckError: Agda could not see that this recursion ends. Each recursive call must be on a smaller argument.
+Termination checking failed for the following functions:
+  f
+Problematic calls:
+  f (suc n)
+    (at line 17)

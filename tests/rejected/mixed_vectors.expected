@@ -1,0 +1,4 @@
+  File "tests/rejected/mixed_vectors.py", line 20
+    print(same(Cons(1, Nil()), Cons("a", Nil())))
+TypeCheckError: String != Nat
+when checking that the expression "a" has type Nat

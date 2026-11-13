@@ -1,0 +1,5 @@
+  File "tests/rejected/missing_case.py", line 19
+    return 0
+TypeCheckError: Incomplete pattern matching for f. Missing cases:
+  f (Cons head xs)
+when checking the definition of f

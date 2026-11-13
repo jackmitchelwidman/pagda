@@ -1,0 +1,3 @@
+  File "tests/rejected/unbound.py", line 19
+    return y
+TypeCheckError: 'y' is read here, but no assignment to it has run on this path

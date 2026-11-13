@@ -1,0 +1,4 @@
+  File "tests/rejected/wrong_type.py", line 17
+    return my_value
+TypeCheckError: Nat !=< String
+when checking that the expression my_value has type String

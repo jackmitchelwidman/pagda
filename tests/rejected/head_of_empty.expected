@@ -1,0 +1,5 @@
+  File "tests/rejected/head_of_empty.py", line 23
+    print(head(empty))
+TypeCheckError: zero != (suc _n_14) of type Nat
+when checking that the expression empty has type
+Vec Nat (suc _n_14)

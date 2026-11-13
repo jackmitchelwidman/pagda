@@ -1,0 +1,3 @@
+  File "tests/rejected/other_import.py", line 16
+    import math
+TypeCheckError: write 'from dependent import ...'; a checked file has no other imports

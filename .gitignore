@@ -1,0 +1,6 @@
+pyc
+pyc-debug
+build/
+__pycache__/
+*.pyc
+*.agdai

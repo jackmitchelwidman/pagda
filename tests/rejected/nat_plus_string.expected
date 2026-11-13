@@ -1,0 +1,7 @@
+  File "tests/rejected/nat_plus_string.py", line 29
+    return x + h(rest) + "s"
+TypeCheckError: String !=< Nat
+when checking that the inferred type of an application
+  String
+matches the expected type
+  Nat

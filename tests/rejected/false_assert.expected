@@ -1,0 +1,4 @@
+  File "tests/rejected/false_assert.py", line 16
+    assert 1 + 1 == 3
+TypeCheckError: false != true of type Bool
+when checking that the expression refl has type (2 == 3) ≡ true

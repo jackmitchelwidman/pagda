@@ -1,0 +1,4 @@
+  File "tests/rejected/wrong_length.py", line 16
+    v: Vec[Nat, 3] = Cons(1, Nil())
+TypeCheckError: 0 != 2 of type Nat
+when checking that the expression Nil has type Vec Nat 2

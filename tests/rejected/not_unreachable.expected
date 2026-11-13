@@ -1,0 +1,7 @@
+  File "tests/rejected/not_unreachable.py", line 18
+    case _:
+TypeCheckError: Vec Nat 1 should be empty, but the following constructor patterns
+are valid:
+  Cons {._} _ _
+when checking the clause left hand side
+f ()
