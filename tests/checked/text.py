@@ -116,4 +116,4 @@ assert put_first([1, 2], 7) == [7, 1, 2, 7]
 assert window(-2, 3) == [4, 1, 0, 1, 4] and window(3, -2) == []
 assert neighbours([1, 2, 3]) == [(1, 2), (2, 3)] and neighbours([]) == []
 assert triangle(5) == 10 and find_from([4, 5, 6], 4, 1) == -1 and countdown(10) == [10, 7, 4, 1]
-assert [ch for ch in "héy"] == ["h", "é", "y"]
+assert [ch for ch in "héy"] == ["h", "é", "y"] and "héllo"[1:3] == "él" and "héllo"[1] == "é" and "é" in "héllo" and "hf" < "h\u00e9"

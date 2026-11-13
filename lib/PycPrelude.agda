@@ -595,3 +595,22 @@ lenLt a n m refl p = p
 setAtKeeps : ∀ {a} {@0 A : Set a} (xs : List A) (i : Nat) (v : A) (p : (i < len xs) ≡ true) (k : Nat)
              → (k < len xs) ≡ true → (k < len (setAt xs i v p)) ≡ true
 setAtKeeps xs i v p k q = lenLt k (len xs) (len (setAt xs i v p)) (setAtLen xs i v p refl) q
+
+-- s.strip(): the characters Python counts as white space
+isSpace : Char → Bool
+isSpace c = go (Ch.primCharToNat c) where
+  go : Nat → Bool
+  go n = anyL (((8 < n) ∧ (n < 14)) ∷ ((27 < n) ∧ (n < 33)) ∷ (n N.== 133) ∷ (n N.== 160) ∷ (n N.== 5760)
+               ∷ ((8191 < n) ∧ (n < 8203)) ∷ (n N.== 8232) ∷ (n N.== 8233) ∷ (n N.== 8239) ∷ (n N.== 8287)
+               ∷ (n N.== 12288) ∷ [])
+dropSpaces : List Char → List Char
+dropSpaces [] = []
+dropSpaces (c ∷ cs) with isSpace c
+... | true = dropSpaces cs
+... | false = c ∷ cs
+strLstrip : String → String
+strLstrip s = unchars (dropSpaces (chars s))
+strRstrip : String → String
+strRstrip s = unchars (reverse (dropSpaces (reverse (chars s))))
+strStrip : String → String
+strStrip s = strRstrip (strLstrip s)

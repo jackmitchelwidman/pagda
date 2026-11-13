@@ -141,6 +141,7 @@ struct Var {
     bool nat, erased, captured;
     bool fresh0;         /* bound to a new list or dict that nothing else referred to */
     bool dead;           /* the variable of a for loop that has ended */
+    bool selfref;        /* a def inside a function, while its own body is being written */
     int depth, tp, id;
     Ty *ty;
     const char *fact; bool fpol;
@@ -204,7 +205,7 @@ static const struct { const char *py, *agda; int kind, arity; } prelude_names[] 
     {"absurd", "absurd", SK_FUNC, 1}, {"concat", "concat", SK_FUNC, 2}, {"unreachable", NULL, SK_SPECIAL, 0},
     {"to_nat", "toNat", SK_FUNC, 1}, {"known", NULL, SK_SPECIAL, 0}, {"decreases", NULL, SK_SPECIAL, 0},
     {"hole", NULL, SK_SPECIAL, 0}, {"dataclass", NULL, SK_SPECIAL, 0}, {"trusted", NULL, SK_SPECIAL, 0},
-    {"Optional", NULL, SK_TYPE, 1},
+    {"Optional", NULL, SK_TYPE, 1}, {"replace", NULL, SK_SPECIAL, 0},
 };
 /* Type names that need no import. */
 static const struct { const char *py, *agda; int arity; } builtin_types[] = {
@@ -231,7 +232,7 @@ static const char *const reserved[] = {
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
     "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
     "findKey", "dfind", "chars", "unchars", "strIndex", "strSlice", "strTake", "strDrop", "strChars", "isPrefix", "startsWith", "endsWith",
-    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "lastOk", "lastOf", "ltDown", "setAtLen", "lenLt", "setAtKeeps",
+    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "lastOk", "lastOf", "ltDown", "setAtLen", "lenLt", "setAtKeeps",
     "popped", "insertAt", "rangeInt", "Char", "ltNotZero", "posNotZero", "negNotZero", "sucs", "ltSucs", "monusUp", "intDown", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
     "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
@@ -461,6 +462,9 @@ static Ref lookup(T *t, Str *name, int line) {
             if (v->erased && !t->c.in_type)
                 terr(t, line, "'%s' is a name in square brackets. Such names exist only for the type checker, "
                               "so they can appear in annotations and nowhere else.", name->s);
+            if (v->selfref)
+                terr(t, line, "'%s' is defined inside another function and calls itself, which is not available in a "
+                              "checked file. Define it at the top level of the file.", name->s);
             if (v->dead)
                 terr(t, line, "'%s' was the variable of a for loop that has ended. Inside the loop, give its value to "
                               "another name to use it afterwards.", name->s);
@@ -779,7 +783,8 @@ static Ty *ty_of(T *t, Node *n) {
             if (tk(r) == TK_LIST && str_eqc(m, "pop")) return r->a;
             if (tk(r) == TK_STR) {
                 if (str_eqc(m, "startswith") || str_eqc(m, "endswith")) return &ty_bool;
-                if (str_eqc(m, "join") || str_eqc(m, "replace")) return &ty_str;
+                if (str_eqc(m, "join") || str_eqc(m, "replace") || str_eqc(m, "strip") || str_eqc(m, "lstrip") || str_eqc(m, "rstrip"))
+                    return &ty_str;
                 if (str_eqc(m, "split")) return mk_ty(TK_LIST, &ty_str, NULL);
             }
             if (tk(r) == TK_DICT && str_eqc(m, "copy")) return r;
@@ -807,6 +812,7 @@ static Ty *ty_of(T *t, Node *n) {
         Sym *s = find_sym(t, AS_STR(n->a->val));
         if (s && s->kind == SK_RECORD) { Ty *r = mk_ty(TK_REC, NULL, NULL); r->sym = s; return r; }
         if (s && s->kind == SK_FUNC) { sym_tys(t, s); return s->ret_ty; }
+        if (!s && str_eqc(AS_STR(n->a->val), "replace") && imported(t, "replace") && argc >= 1) return ty_of(t, n->l[0][0]);
         if (s && s->kind == SK_VALUE) return tk(s->ty) == TK_FUN ? s->ty->a : NULL;
         if (!s) {
             Str *nm = AS_STR(n->a->val);
@@ -1052,9 +1058,15 @@ static const char *div_proof(T *t, const char *b, bool is_int, int line) {
 
 static const char *maybe_type(T *t, Node *inner, int line);
 
+__attribute__((noreturn)) static void may_be_none(T *t, int line) {
+    terr(t, line, "this value may be None, and a value that is never None is needed here. "
+                  "Test it first with 'if ... is None:' or 'if ... is not None:'.");
+}
+
 static const char *binop_expr(T *t, Node *n, Ty *want) {
     Ty *lt = ty_of(t, n->a), *rt = ty_of(t, n->b);
     int lk = tk(lt), rk = tk(rt), op = n->op;
+    if ((lk == TK_OPT || rk == TK_OPT) && !t->c.in_type) may_be_none(t, n->line);
     int k = lk == TK_INT || rk == TK_INT ? TK_INT : lk == TK_STR || rk == TK_STR ? TK_STR : lk == TK_LIST || rk == TK_LIST ? TK_LIST : TK_NAT;
     /* a - b on two Nats is fine when an int is wanted: it is worked out as ints. */
     if (k == TK_NAT && tk(want) == TK_INT && op == OP_SUB) k = TK_INT;
@@ -1425,6 +1437,30 @@ static const char *call_expr(T *t, Node *n, Ty *want) {
         }
         if (sym_is(s, "decreases"))
             terr(t, n->line, "decreases(measure, proof) is written as the last statement of a while loop");
+        if (sym_is(s, "replace")) {
+            /* replace(p, x=1): a new value of p's class with some fields changed */
+            Ty *rt = argc && n->l[0][0]->kind != E_KEYWORD && n->l[0][0]->kind != E_STARRED ? ty_of(t, n->l[0][0]) : NULL;
+            if (tk(rt) != TK_REC)
+                terr(t, n->line, "replace takes a value of a @dataclass class whose type the checker knows, then the fields to change by name");
+            Sym *rec = rt->sym;
+            need(t, rec, n->line);
+            const char *base = ER(t, n->l[0][0], NULL);
+            const char **parts = arena_alloc((size_t)(rec->nfields + 1) * sizeof(char *));
+            for (int i = 1; i < argc; i++) {
+                Node *a = n->l[0][i];
+                Sym *f = a->kind == E_KEYWORD && a->val ? field_of(rec, AS_STR(a->val)) : NULL;
+                if (!f) terr(t, a->line, "after the value, replace takes fields of '%s' by name, as in x=1", rec->py->s);
+                for (int j = 0; j < rec->nfields; j++)
+                    if (rec->fields[j] == f) {
+                        if (parts[j]) terr(t, a->line, "the field '%s' is given twice", f->py->s);
+                        parts[j] = EW(t, a->a, f->ty);
+                    }
+            }
+            const char *text = rec->ctor;
+            for (int j = 0; j < rec->nfields; j++)
+                text = af("%s %s", text, parts[j] ? parts[j] : af("(%s.%s %s)", rec->agda, rec->fields[j]->agda, base));
+            return rec->nfields ? af("(%s)", text) : text;
+        }
         if (sym_is(s, "hole")) {
             if (argc) terr(t, n->line, "hole() takes no arguments");
             t->nholes++;
@@ -1526,6 +1562,7 @@ static const char *slice_bound(T *t, Node *b, const char *base, bool is_str) {
 static const char *index_expr(T *t, Node *n) {
     Ty *bt = ty_of(t, n->a);
     Node *i = n->b;
+    if (tk(bt) == TK_OPT) may_be_none(t, n->line);
     bool last = (i->kind == E_UNARY && i->op == '-' && is_int_const(i->a) && int_cmp(i->a->val, int_new(1)) == 0) ||
                 (is_int_const(i) && int_cmp(i->val, int_new(-1)) == 0);
     if (i->kind != E_SLICE && ((i->kind == E_UNARY && i->op == '-' && !(last && tk(bt) == TK_LIST)) || (is_int_const(i) && int_sign(i->val) < 0 && !(last && tk(bt) == TK_LIST))))
@@ -1709,8 +1746,7 @@ static const char *EW(T *t, Node *n, Ty *want) {
         return af("(just %s)", EW(t, n, want->a));
     }
     if (want && wk != TK_OPT && wk != TK_NONE && n->kind != E_IFEXP && tk(ty_of(t, n)) == TK_OPT)
-        terr(t, n->line, "this value may be None, and a value that is never None is needed here. "
-                         "Test it first with 'if ... is None:' or 'if ... is not None:'.");
+        may_be_none(t, n->line);
     if (wk == TK_INT) {
         if (is_int_const(n)) return int_lit(t, n, false);
         bool own = n->kind == E_IFEXP || n->kind == E_UNARY || (n->kind == E_BINOP && n->op == OP_SUB) ||
@@ -2125,6 +2161,7 @@ static const char *record_call(T *t, Sym *s, Node *n, Ty *want) {
 
 static const char *attr_expr(T *t, Node *n) {
     Ty *b = ty_of(t, n->a);
+    if (tk(b) == TK_OPT) may_be_none(t, n->line);
     if (tk(b) != TK_REC)
         terr(t, n->line, "attribute access is available on a value whose class the checker knows. "
                          "Give the value a type annotation, or use match to take a Data value apart.");
@@ -2146,6 +2183,7 @@ static const char *method_call(T *t, Node *n) {
     Str *m = AS_STR(n->a->val);
     int argc = n->n[0];
     Ty *rt = ty_of(t, recv);
+    if (tk(rt) == TK_OPT) may_be_none(t, n->line);
     if (tk(rt) == TK_REC) {
         need(t, rt->sym, n->line);
         Sym *ms = method_of(t, rt->sym, m);
@@ -2168,6 +2206,9 @@ static const char *method_call(T *t, Node *n) {
         if ((str_eqc(m, "startswith") || str_eqc(m, "endswith")) && argc == 1)
             return af("(%s %s %s)", str_eqc(m, "startswith") ? "startsWith" : "endsWith", self, E(t, n->l[0][0]));
         if (str_eqc(m, "join") && argc == 1) return af("(strJoin %s %s)", self, EI(t, n->l[0][0]));
+        if (str_eqc(m, "strip") && argc == 0) return af("(strStrip %s)", self);
+        if (str_eqc(m, "lstrip") && argc == 0) return af("(strLstrip %s)", self);
+        if (str_eqc(m, "rstrip") && argc == 0) return af("(strRstrip %s)", self);
         /* split and replace look for a piece of text, and Python refuses an empty one */
         bool piece = argc >= 1 && n->l[0][0]->kind == E_CONST && IS_STR(n->l[0][0]->val) && AS_STR(n->l[0][0]->val)->len > 0;
         if (str_eqc(m, "split") && argc == 1 && piece) return af("(strSplit %s %s)", self, E(t, n->l[0][0]));
@@ -2177,7 +2218,8 @@ static const char *method_call(T *t, Node *n) {
         }
         if (str_eqc(m, "split") || str_eqc(m, "replace"))
             terr(t, n->line, "s.%s in a checked file takes the text to look for as a string written out, and not an empty one", m->s);
-        terr(t, n->line, "the string methods in a checked file are startswith, endswith, join, split and replace");
+        terr(t, n->line, "the string methods in a checked file are startswith, endswith, join, split, replace, and "
+                         "strip, lstrip and rstrip with no argument");
     }
     if (tk(rt) == TK_LIST && str_eqc(m, "pop"))
         terr(t, n->line, "xs.pop() is written as a statement of its own, or as: x = xs.pop()");
@@ -2195,7 +2237,7 @@ static const char *method_call(T *t, Node *n) {
     terr(t, n->line, "this method call is not available in a checked file, or the checker does not know the type of the "
                      "value it is called on. Methods are available on classes; lists have append, extend, insert, pop, "
                      "sort, reverse, clear and copy; dicts have get, items, keys, values, clear and copy; strings have "
-                     "startswith, endswith, join, split and replace.");
+                     "startswith, endswith, join, split, replace and strip.");
 }
 
 /* ---------- function bodies ---------- */
@@ -2375,13 +2417,21 @@ static void assigned(T *t, Names *ns, Node **l, int n, bool all) {
             continue;
         }
         switch (s->kind) {
-        case S_ASSIGN: if (all) for (int j = 0; j < s->n[0]; j++) target_names(ns, s->l[0][j]); break;
+        case S_ASSIGN:
+            if (all) for (int j = 0; j < s->n[0]; j++) target_names(ns, s->l[0][j]);
+            else if (s->n[0] == 1 && s->l[0][0]->kind == E_TUPLE)   /* xs[i], xs[j] = ... changes xs in place */
+                for (int j = 0; j < s->l[0][0]->n[0]; j++) {
+                    Node *e = s->l[0][0]->l[0][j];
+                    if (e->kind == E_SUBSCR && e->a->kind == E_NAME) names_add(ns, AS_STR(e->a->val));
+                }
+            break;
         case S_ANNASSIGN: if (all) target_names(ns, s->a); break;
         case S_AUGASSIGN:
             if (s->a->kind != E_NAME) break;
             if (all) names_add(ns, AS_STR(s->a->val));
             else { Var *v = find_var(t, AS_STR(s->a->val)); if (v && tk(v->ty) == TK_LIST) names_add(ns, v->py); }
             break;
+        case S_DEF: if (all) names_add(ns, AS_STR(s->val)); break;
         case S_IF: assigned(t, ns, s->l[0], s->n[0], all); assigned(t, ns, s->l[1], s->n[1], all); break;
         case S_MATCH:
             for (int j = 0; j < s->n[0]; j++) {
@@ -2603,7 +2653,6 @@ __attribute__((noreturn)) static void bad_stmt(T *t, Node *s, bool top) {
     case S_BREAK: case S_CONTINUE: what = "break or continue outside a loop"; break;
     case S_TRY: case S_RAISE: what = "exception handling"; break;
     case S_AUGASSIGN: what = "an assignment like +="; break;
-    case S_DEF: what = "a nested def"; break;
     case S_CLASS: what = "a nested class"; break;
     case S_GLOBAL: case S_NONLOCAL: what = "global or nonlocal"; break;
     case S_IMPORT: case S_IMPORTFROM: what = "an import"; break;
@@ -2887,8 +2936,19 @@ static bool setitem_only(T *t, Node **l, int n, Str *name) {
             continue;
         }
         switch (s->kind) {
-        case S_ASSIGN: for (int j = 0; j < s->n[0]; j++) target_names(&plain, s->l[0][j]); break;
-        case S_ANNASSIGN: case S_AUGASSIGN: target_names(&plain, s->a); break;
+        case S_ASSIGN:
+            for (int j = 0; j < s->n[0]; j++) {
+                Node *tg = s->l[0][j];
+                if (tg->kind == E_NAME) names_add(&plain, AS_STR(tg->val));
+                else if (tg->kind == E_TUPLE)
+                    for (int q = 0; q < tg->n[0]; q++) {
+                        Node *e = tg->l[0][q];
+                        if (e->kind == E_NAME) names_add(&plain, AS_STR(e->val));
+                        else if (e->kind != E_SUBSCR || e->b->kind == E_SLICE) return false;
+                    }
+            }
+            break;
+        case S_ANNASSIGN: case S_AUGASSIGN: if (s->a->kind == E_NAME) names_add(&plain, AS_STR(s->a->val)); break;
         case S_IF: case S_WHILE:
             if (!setitem_only(t, s->l[0], s->n[0], name) || !setitem_only(t, s->l[1], s->n[1], name)) return false;
             break;
@@ -2954,6 +3014,99 @@ static const char *assert_proof(T *t, Node *s, const char **core, bool *pol) {
     return p ? p : auto_refl(t, s->line);
 }
 
+/* xs[i], xs[j] = xs[j], xs[i]: every value on the right is worked out first, then
+   the targets are assigned from left to right. Returns the statements that do
+   that, or 0 when `s` is not of this shape. */
+static int expand_assign(T *t, Node *s, Node ***out) {
+    if (s->kind != S_ASSIGN || s->n[0] != 1 || s->l[0][0]->kind != E_TUPLE || s->a->kind != E_TUPLE) return 0;
+    Node *tg = s->l[0][0];
+    int c = tg->n[0];
+    bool plain = true;
+    for (int i = 0; i < c; i++) if (tg->l[0][i]->kind != E_NAME) plain = false;
+    if (plain || c != s->a->n[0]) return 0;
+    Node **l = arena_alloc((size_t)(2 * c) * sizeof(Node *));
+    for (int i = 0; i < c; i++) {
+        Node *name = synth(E_NAME, s->line);
+        name->val = str_c(af("held\xC2\xB7%d\xC2\xB7%d", ++t->next_id, i));   /* a name Python cannot spell */
+        Node *set = synth(S_ASSIGN, s->line), *put = synth(S_ASSIGN, s->line);
+        set->l[0] = arena_alloc(sizeof(Node *)); set->l[0][0] = name; set->n[0] = 1; set->a = s->a->l[0][i];
+        put->l[0] = arena_alloc(sizeof(Node *)); put->l[0][0] = tg->l[0][i]; put->n[0] = 1; put->a = name;
+        l[i] = set; l[c + i] = put;
+    }
+    *out = l;
+    return 2 * c;
+}
+
+static void scan_ints(T *t, Names *ints, Node **l, int n);
+
+/* A def inside a function: a function value held in a local name. It can use the
+   names around it, and it cannot call itself. Returns the Agda text; *ty is its type. */
+static const char *local_def(T *t, Node *def, Ty **ty) {
+    Params *p = def->params;
+    Str *name = AS_STR(def->val);
+    static const char *const w[] = {"fun\xE2\x82\x80", "fun\xE2\x82\x81", "fun\xE2\x82\x82", "fun\xE2\x82\x83", "fun\xE2\x82\x84"};
+    if (def->n[1]) terr(t, def->line, "decorators on a def inside a function are not available in a checked file");
+    if (def->n[2]) terr(t, def->line, "a def inside a function cannot have names in square brackets in a checked file");
+    if (p->vararg || p->kwarg || p->nkwonly || p->nposonly) terr(t, def->line, "a checked function takes plain parameters only: no *, ** or /");
+    if (p->n > 4) terr(t, def->line, "a def inside a function can take at most 4 arguments in a checked file");
+    if (!def->b) terr(t, def->line, "'%s' needs a return annotation", name->s);
+    Ty *fty = mk_ty(TK_FUN, NULL, NULL);
+    fty->items = arena_alloc((size_t)(p->n + 1) * sizeof(Ty *));
+    fty->n = p->n;
+    Ctx saved = t->c;
+    Out body = {0}, *cur = t->cur;
+    t->c.lambda_depth++;
+    bind(t, name, "_", false, false, def->line);
+    t->c.env->selfref = true;
+    const char *binders = "";
+    for (int i = 0; i < p->n; i++) {
+        if (p->defaults[i]) terr(t, def->line, "default values are not available on a def inside a function");
+        if (!p->ann[i]) terr(t, def->line, "parameter '%s' needs a type annotation", p->names[i]->s);
+        const char *tt = tr_type(t, p->ann[i]);
+        fty->items[i] = ty_ann(t, p->ann[i], NULL, NULL);
+        const char *a = fresh(t, p->names[i]->s);
+        bindv(t, p->names[i], a, false, fty->items[i], def->line);
+        binders = af("%s (%s : %s)", binders, a, tt);
+    }
+    fty->a = ty_ann(t, def->b, NULL, NULL);
+    Names ints = {0};
+    Var *env = t->c.env;
+    scan_ints(t, &ints, def->l[0], def->n[0]);
+    scan_ints(t, &ints, def->l[0], def->n[0]);
+    t->c.env = env;
+    t->c.ints = ints.v; t->c.nints = ints.n;
+    t->c.ret_ty = fty->a;
+    Tail tl = {0};
+    tl.ret = fty->a;
+    t->cur = &body;
+    sx(t, k_push(def->l[0], def->n[0], NULL), &tl, def->line);
+    t->cur = cur;
+    /* what the body handed on, and which names it used, stay known outside it */
+    Leak *leaks = t->c.leaks;
+    const char **used = t->c.used, **lhs = t->c.lhs;
+    int nused = t->c.nused, ucap = t->c.ucap, nlhs = t->c.nlhs, lhscap = t->c.lhscap;
+    t->c = saved;
+    t->c.leaks = leaks;
+    t->c.used = used; t->c.nused = nused; t->c.ucap = ucap; t->c.lhs = lhs; t->c.nlhs = nlhs; t->c.lhscap = lhscap;
+    *ty = fty;
+    /* The text may land inside a `let`, whose layout ends at a line that starts
+       further left than the name it binds. So the body is pushed well to the right. */
+    SB b;
+    sb_init(&b);
+    const char *raw = body.s ? body.s : "";
+    size_t rl = strlen(raw);
+    while (rl && raw[rl - 1] == '\n') rl--;
+    sb_puts(&b, "                ");
+    for (size_t i = 0; i < rl; i++) {
+        sb_putc(&b, raw[i]);
+        if (raw[i] == '\n') sb_puts(&b, "                ");
+    }
+    sb_putc(&b, 0);
+    const char *text = astr(b.s);
+    sb_free(&b);
+    return p->n ? af("(%s (\xCE\xBB%s \xE2\x86\x92\n%s))", w[p->n], binders, text) : af("(%s (\n%s))", w[0], text);
+}
+
 /* Tries the statements after a match as its last case. They may read a name that
    only the cases assign; then no last case is written, and Agda insists that the
    cases cover everything. Returns whether the case was written. */
@@ -3002,7 +3155,19 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         K *rest = k_tail(k);
         if (skippable(s)) { k = rest; continue; }
         line = s->line;
+        Node **ex;
+        int nex = expand_assign(t, s, &ex);
+        if (nex) { k = k_push(ex, nex, rest); continue; }
         switch (s->kind) {
+        case S_DEF: {
+            Ty *fty;
+            const char *f = local_def(t, s, &fty);
+            const char *a = fresh(t, AS_STR(s->val)->s);
+            o_put(t->cur, s->line, af("  let %s = %s in\n", a, f));
+            bindv(t, AS_STR(s->val), a, false, fty, s->line);
+            k = rest;
+            continue;
+        }
         case S_RETURN:
             if (!s->a && tk(tl->ret) != TK_NONE) terr(t, s->line, "return needs a value in a function that does not return None");
             no_more(t, k, "return");
@@ -3445,7 +3610,18 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
             sx(t, k, &fn_tail, line);
             return;
         }
+        Node **ex;
+        int nex = expand_assign(t, s, &ex);
+        if (nex) { k = k_push(ex, nex, rest); continue; }
         switch (s->kind) {
+        case S_DEF: {
+            /* the name stands for the function value from here on */
+            Ty *fty;
+            const char *f = local_def(t, s, &fty);
+            bindv(t, AS_STR(s->val), f, false, fty, s->line);
+            k = rest;
+            continue;
+        }
         case S_EXPR: case S_ASSIGN: case S_ANNASSIGN: case S_AUGASSIGN: {
             Var *old = NULL;
             if (pop_call(s)) {

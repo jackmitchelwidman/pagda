@@ -1,0 +1,3 @@
+  File "tests/rejected/default_list.py", line 5
+    def f(x: int, acc: list[int] = []) -> list[int]:
+TypeCheckError: a default value in a checked file is a number, a string, True, False or None, written out

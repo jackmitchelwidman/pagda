@@ -511,8 +511,14 @@ static Obj *s_swapcase(ARGS) { UNUSED; return map_case(SELF, 2); }
 static Obj *s_capitalize(ARGS) { UNUSED; return map_case(SELF, 3); }
 static Obj *s_title(ARGS) { UNUSED; return map_case(SELF, 4); }
 
+/* The characters Python counts as white space (str.isspace). */
+static bool uni_space(uint32_t c) {
+    return (c >= 9 && c <= 13) || (c >= 28 && c <= 32) || c == 133 || c == 160 || c == 5760 || (c >= 8192 && c <= 8202) ||
+           c == 8232 || c == 8233 || c == 8239 || c == 8287 || c == 12288;
+}
+
 static bool in_chars(uint32_t cp, Str *chars) {
-    if (!chars) return cp < 128 && is_space((unsigned char)cp);
+    if (!chars) return uni_space(cp);
     const char *p = chars->s, *e = chars->s + chars->len;
     while (p < e) if (utf8_next(&p) == cp) return true;
     return false;
@@ -786,7 +792,7 @@ typedef int (*CharPred)(uint32_t);
 static int p_digit(uint32_t c) { return c < 128 ? isdigit((int)c) : iswdigit((wint_t)c); }
 static int p_alpha(uint32_t c) { return c < 128 ? isalpha((int)c) : iswalpha((wint_t)c); }
 static int p_alnum(uint32_t c) { return c < 128 ? isalnum((int)c) : iswalnum((wint_t)c); }
-static int p_space(uint32_t c) { return c < 128 ? is_space((unsigned char)c) : iswspace((wint_t)c); }
+static int p_space(uint32_t c) { return uni_space(c); }
 static int p_ascii(uint32_t c) { return c < 128; }
 static int p_print(uint32_t c) { return cp_printable(c); }
 static Obj *all_chars(Str *s, CharPred f, bool empty_ok) {

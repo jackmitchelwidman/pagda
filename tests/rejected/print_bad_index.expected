@@ -1,0 +1,5 @@
+  File "tests/rejected/print_bad_index.py", line 6
+    print("first:", xs[0])
+TypeCheckError: (0 < len xs) != true of type Bool
+when checking that the expression refl has type (0 < len xs) ≡ true
+The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.

@@ -1,0 +1,4 @@
+  File "tests/rejected/none_return_value.py", line 6
+    return n
+TypeCheckError: Int !=< ⊤
+when checking that the expression n has type ⊤

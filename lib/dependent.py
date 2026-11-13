@@ -18,9 +18,10 @@ most things here are small. It runs the same under python3 and pyc.
 
 __all__ = ["Type", "Nat", "Data", "constructor", "Callable", "Eq", "Refl", "refl", "suc", "pred", "monus",
            "concat", "sym", "trans", "cong", "subst", "Empty", "absurd", "unreachable", "Fn", "Dec", "Yes", "No",
-           "decide", "to_nat", "known", "decreases", "hole", "dataclass", "trusted", "Optional"]
+           "decide", "to_nat", "known", "decreases", "hole", "dataclass", "trusted", "Optional", "replace"]
 
 from typing import Optional
+from dataclasses import replace
 
 from dataclasses import dataclass
 
