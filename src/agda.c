@@ -15,16 +15,26 @@
      def f[A, n: Nat](xs: Vec[A, n]) -> Nat:  names in [] exist only for the checker
          match xs: ...                        becomes Agda clauses
          if n == 0: ... else: ... n - 1 ...   splits a Nat into zero and suc
-     if c: ... else: ...                  a `with` on c
-     match decide(c): case Yes(p): ...    a `with c in p`
-     Fn[k: Nat, P(k)]                     a function type whose result mentions the argument
+         if c: ... else: ...                  a `with` on c
+         match decide(c): case Yes(p): ...    a `with c in p`
+         for x in xs: ...                     a fold of the body over the items
+         xs.append(x)                         xs gets a new value (allowed on unshared lists only)
+     Fn[k: Nat, P(k)]                         a function type whose result mentions the argument
+     @dataclass class Point: x: int           a record
+     @trusted def f(...) -> T: ...            a postulate
+     from other import f                      another checked file, as its own Agda module
      x: T = e, print(e), assert e             at the top level
 
    Each function body is turned into clauses by walking its statements with the
    left-hand side so far (`lhs`) and the statements still to run (`K`). A match or
    a zero test on a variable replaces that variable in the left-hand side by a
-   pattern. Any other match or test adds a `with` column. A run of statements
-   with no further split becomes one expression. */
+   pattern. Any other match or test adds a `with` column, and so does a loop. A
+   run of statements with no further split becomes one expression, and so does
+   the body of a loop.
+
+   Agda does all the checking. The translator follows annotations only to choose
+   between meanings that Python writes the same way: + on Nat, int, str or list,
+   a literal 3 as Nat or int, xs[i] on a list, tuple or dict. */
 #include "ast.h"
 #include <ctype.h>
 #include <errno.h>
@@ -2028,6 +2038,15 @@ typedef struct { Str *name; Node *tuple, *value, *ann; } Asg;
    given an int anywhere. Such a name is an int from its first assignment on. The
    walk binds each name to the type of its value, in order, and goes round twice
    so that a name set late in a loop is known at the top of it. */
+static void scan_target(T *t, Node *tg, Ty *ty) {
+    if (tg->kind == E_NAME) {
+        bind(t, AS_STR(tg->val), "_", false, false, 0);
+        t->c.env->ty = ty;
+    } else if (tg->kind == E_TUPLE)
+        for (int j = 0; j < tg->n[0]; j++)
+            scan_target(t, tg->l[0][j], tk(ty) == TK_TUPLE && ty->n == tg->n[0] ? ty->items[j] : NULL);
+}
+
 static void scan_ints(T *t, Names *ints, Node **l, int n) {
     for (int i = 0; i < n; i++) {
         Node *s = l[i];
@@ -2051,18 +2070,7 @@ static void scan_ints(T *t, Names *ints, Node **l, int n) {
             break;
         }
         case S_FOR:
-            if (s->a->kind == E_NAME) {
-                Ty *elem = iter_elem(t, s->b);
-                bind(t, AS_STR(s->a->val), "_", false, false, 0);
-                t->c.env->ty = elem;
-            } else if (s->a->kind == E_TUPLE) {
-                Ty *elem = iter_elem(t, s->b);
-                for (int j = 0; j < s->a->n[0]; j++)
-                    if (s->a->l[0][j]->kind == E_NAME) {
-                        bind(t, AS_STR(s->a->l[0][j]->val), "_", false, false, 0);
-                        t->c.env->ty = tk(elem) == TK_TUPLE && elem->n == s->a->n[0] ? elem->items[j] : NULL;
-                    }
-            }
+            scan_target(t, s->a, iter_elem(t, s->b));
             scan_ints(t, ints, s->l[0], s->n[0]);
             break;
         case S_WHILE: scan_ints(t, ints, s->l[0], s->n[0]); break;
