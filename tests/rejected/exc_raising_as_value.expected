@@ -1,0 +1,4 @@
+  File "tests/rejected/exc_raising_as_value.py", line 18
+    assert apply(risky, 1) == 1
+TypeCheckError: (Exc Int) !=< Int
+when checking that the expression risky has type (x : Int) → Int

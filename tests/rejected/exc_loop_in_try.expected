@@ -1,0 +1,3 @@
+  File "tests/rejected/exc_loop_in_try.py", line 17
+    for x in xs:
+TypeCheckError: this loop is inside a try, and its body can raise. That is not available in a checked file yet. Move the loop into a def of its own and call it from the try.

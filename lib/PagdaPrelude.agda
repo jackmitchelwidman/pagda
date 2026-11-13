@@ -669,3 +669,15 @@ andThenR : {a : Bool} {f : a ≡ true → Bool} (p : andThen a f ≡ true) → f
 andThenR {true} p = p
 unNotFalse : {c : Bool} → not c ≡ false → c ≡ true
 unNotFalse {true} p = refl
+
+-- ---------------------------------------------------------------------------
+-- Exceptions. An exception is the name of its class and its message. A def
+-- that can raise gives back either its value (ok) or an exception (err).
+record Exn : Set where
+  constructor exn
+  field
+    kind : String
+    message : String
+data Exc {a} (A : Set a) : Set a where
+  ok : A → Exc A
+  err : Exn → Exc A

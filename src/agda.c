@@ -97,8 +97,8 @@ static void o_put(Out *o, int pyline, const char *s) {
 
 /* ---------- data structures ---------- */
 
-enum { SK_FUNC, SK_DATA, SK_CTOR, SK_VALUE, SK_TYPE, SK_SPECIAL, SK_RECORD, SK_FIELD };
-enum { TK_NAT = 1, TK_INT, TK_BOOL, TK_STR, TK_LIST, TK_TUPLE, TK_DICT, TK_FUN, TK_REC, TK_OTHER, TK_NONE, TK_OPT };
+enum { SK_FUNC, SK_DATA, SK_CTOR, SK_VALUE, SK_TYPE, SK_SPECIAL, SK_RECORD, SK_FIELD, SK_EXC };
+enum { TK_NAT = 1, TK_INT, TK_BOOL, TK_STR, TK_LIST, TK_TUPLE, TK_DICT, TK_FUN, TK_REC, TK_OTHER, TK_NONE, TK_OPT, TK_EXN };
 
 typedef struct Sym Sym;
 typedef struct Ty Ty;
@@ -127,6 +127,7 @@ struct Sym {
     const char *ctor;                /* class with fields: the Agda constructor */
     bool has_eq;
     bool trusted;                    /* @trusted def: its type is taken on trust */
+    uint64_t raises;                 /* def: the exception classes it can let out; bit 63 stands for "some other" */
     bool external;                   /* imported from another checked file */
     bool foreign;                    /* defined in another checked file, which is already checked */
 };
@@ -143,6 +144,7 @@ struct Var {
     bool fresh0;         /* bound to a new list or dict that nothing else referred to */
     bool dead;           /* the variable of a for loop that has ended */
     bool selfref;        /* a def inside a function, while its own body is being written */
+    bool gone;           /* the variable of an except block that has ended */
     const char *wide;    /* after `is not None`: the value as it was, still possibly None, for the loop state */
     int depth, tp, id;
     int loop_level;      /* how many loops and comprehensions were open where the name was bound */
@@ -166,6 +168,8 @@ typedef struct {
     int printing;                         /* inside the arguments of print: the value is only shown */
     Leak *leaks;
     Ty *ret_ty;                           /* what the function being written returns */
+    bool fn_raises;                       /* that function can let an exception out: its Agda result is Exc T */
+    bool in_local;                        /* inside a def that is inside a function */
     Str **ints; int nints;                /* locals that hold an int somewhere in the function */
     Str **opt_names; Ty **opt_tys; int nopts;   /* locals that are None in one place and a value in another */
     Str **up_names; Ty **up_tys; int nups;      /* locals handed to something that takes ints */
@@ -183,6 +187,7 @@ typedef struct {
     Ctx c;
     int stmt_line;
     int next_id, nholes;
+    Node *allow_raise;  /* the one call to a def that can raise which the statement being written handles */
     /* set by mutation() when the change was xs[i] = v on a list: its parts */
     const char *set_ix, *set_val, *set_p;
     int *auto_lines; int nauto, acap;    /* Python lines where refl stands in for a proof */
@@ -198,9 +203,25 @@ typedef struct {
     jmp_buf *try_jmp;   /* set while translating code that may turn out to be unreachable */
 } T;
 
-/* Statements still to run: a list of segments. */
+/* A try statement around the statements being written: its handlers, what runs
+   after it, and the try around it. */
+typedef struct Try Try;
+
+/* Statements still to run: a list of segments. `ctx` is the innermost try whose
+   body the segment is in. In an except block, `exn` is the exception being
+   handled and `exn_class` its class when that is known. */
 typedef struct K K;
-struct K { Node **l; int n, i; K *next; };
+struct K { Node **l; int n, i; K *next; Try *ctx; const char *exn; int exn_class; };
+struct Try { Node *node; K *after; Try *outer; };
+static Try *g_ctx;   /* the try around the statement being written; new segments start inside it */
+
+/* Exception classes: the built-in ones and those the files define. The table is
+   shared by every file checked in one run, since a def can let an exception of
+   another file's class out. */
+typedef struct { Str *name; int parent; bool user; } ExC;
+static ExC g_exc[63];
+static int g_nexc;
+#define RAISES_OTHER (1ULL << 63)
 
 static const struct { const char *py, *agda; int kind, arity; } prelude_names[] = {
     {"Type", "Set", SK_TYPE, 0}, {"Nat", "Nat", SK_TYPE, 0}, {"Empty", "\xE2\x8A\xA5", SK_TYPE, 0},
@@ -238,7 +259,7 @@ static const char *const reserved[] = {
     "allL", "insertBy", "sortBy", "sortedNat", "sortedInt", "strLen", "Dict", "mkDict", "items", "hasKey", "has", "getOr",
     "dget", "lookupKey", "dindex", "putKey", "dset", "dictOf", "dictFrom", "dlen", "dkeys", "dvalues", "Step", "next",
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
-    "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
+    "whileFuel", "whileDo", "Exn", "exn", "Exc", "ok", "err", "kind", "message", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
     "findKey", "dfind", "chars", "unchars", "strIndex", "strSlice", "strTake", "strDrop", "strChars", "isPrefix", "startsWith", "endsWith",
     "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "andThen", "orElse", "andThenL", "andThenR", "unNotFalse", "ltAsym", "ltLower", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
     "popped", "insertAt", "rangeInt", "Char", "ltNotZero", "posNotZero", "negNotZero", "sucs", "ltSucs", "monusUp", "intDown", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
@@ -461,7 +482,7 @@ static void need(T *t, Sym *s, int line) {
 
 typedef struct { Var *v; Sym *s; } Ref;
 static Ty ty_nat = {TK_NAT, 0, 0, 0, 0, 0}, ty_int = {TK_INT, 0, 0, 0, 0, 0}, ty_bool = {TK_BOOL, 0, 0, 0, 0, 0},
-          ty_str = {TK_STR, 0, 0, 0, 0, 0}, ty_none = {TK_NONE, 0, 0, 0, 0, 0};
+          ty_str = {TK_STR, 0, 0, 0, 0, 0}, ty_none = {TK_NONE, 0, 0, 0, 0, 0}, ty_exn = {TK_EXN, 0, 0, 0, 0, 0};
 
 static Ref lookup(T *t, Str *name, int line) {
     Ref r = {0};
@@ -470,6 +491,9 @@ static Ref lookup(T *t, Str *name, int line) {
             if (v->erased && !t->c.in_type)
                 terr(t, line, "'%s' is a name in square brackets. Such names exist only for the type checker, "
                               "so they can appear in annotations and nowhere else.", name->s);
+            if (v->gone)
+                terr(t, line, "'%s' was the variable of an except block that has ended. Python removes it there. "
+                              "Give what you need from it to another name inside the block.", name->s);
             if (v->selfref)
                 terr(t, line, "'%s' is defined inside another function and calls itself, which is not available in a "
                               "checked file. Define it at the top level of the file.", name->s);
@@ -547,6 +571,182 @@ static Var *env_subst(T *t, const char *name, const char *repl, bool repl_is_var
         tail = &nv->next;
     }
     return head;
+}
+
+/* ---------- exception classes ---------- */
+
+static int exc_find(Str *name) {
+    for (int i = 0; i < g_nexc; i++) if (str_eq(g_exc[i].name, name)) return i;
+    return -1;
+}
+
+static int exc_add(const char *name, int parent, bool user) {
+    g_exc[g_nexc].name = AS_STR(str_c(name)); g_exc[g_nexc].parent = parent; g_exc[g_nexc].user = user;
+    return g_nexc++;
+}
+
+static void exc_init(void) {
+    g_nexc = 0;
+    int root = exc_add("Exception", -1, false);
+    int arith = exc_add("ArithmeticError", root, false), look = exc_add("LookupError", root, false);
+    int run = exc_add("RuntimeError", root, false);
+    exc_add("ZeroDivisionError", arith, false);
+    exc_add("IndexError", look, false);
+    exc_add("NotImplementedError", run, false);
+    exc_add("ValueError", root, false);
+    exc_add("TypeError", root, false);
+}
+
+/* Whether a handler for class h catches an exception of class c. */
+static bool exc_catches(int h, int c) {
+    for (; c >= 0; c = g_exc[c].parent) if (c == h) return true;
+    return false;
+}
+
+/* The classes an except clause names: a mask, with RAISES_OTHER when it catches everything. */
+static uint64_t handler_mask(T *t, Node *h) {
+    if (!h->a) return ~0ULL;
+    Node *one[1] = {h->a}, **l = one;
+    int n = 1;
+    if (h->a->kind == E_TUPLE) { l = h->a->l[0]; n = h->a->n[0]; }
+    uint64_t m = 0;
+    for (int i = 0; i < n; i++) {
+        int c = l[i]->kind == E_NAME ? exc_find(AS_STR(l[i]->val)) : -1;
+        if (c < 0) terr(t, h->line, "an except clause names exception classes: except ValueError, or except (ValueError, TypeError)");
+        if (c == 0) return ~0ULL;
+        for (int j = 0; j < g_nexc; j++) if (exc_catches(c, j)) m |= 1ULL << j;
+    }
+    return m;
+}
+
+/* The class of `raise C(...)` or `raise C`, and its message argument if any. */
+static int raise_class(T *t, Node *e, Node **msg) {
+    *msg = NULL;
+    Node *f = e->kind == E_CALL ? e->a : e;
+    int c = f->kind == E_NAME ? exc_find(AS_STR(f->val)) : -1;
+    if (c < 0)
+        terr(t, e->line, "raise takes an exception class the checker knows, with at most a message: raise ValueError(\"bad input\"). "
+                         "The built-in ones are Exception, ValueError, TypeError, RuntimeError, IndexError, ZeroDivisionError, "
+                         "ArithmeticError, LookupError and NotImplementedError; a file can add its own with 'class MyError(Exception): ...'");
+    if (e->kind == E_CALL) {
+        if (e->n[0] > 1 || (e->n[0] == 1 && (e->l[0][0]->kind == E_KEYWORD || e->l[0][0]->kind == E_STARRED)))
+            terr(t, e->line, "an exception takes at most one argument in a checked file, its message");
+        if (e->n[0] == 1) *msg = e->l[0][0];
+    }
+    return c;
+}
+
+/* --- which defs can let an exception out --- */
+
+typedef struct AF AF;
+struct AF { Node *tr; AF *outer; };
+
+/* Removes from `m` what the try statements in `chain` catch. */
+static uint64_t uncaught(T *t, uint64_t m, AF *chain) {
+    for (AF *f = chain; f && m; f = f->outer)
+        for (int i = 0; i < f->tr->n[1]; i++) m &= ~handler_mask(t, f->tr->l[1][i]);
+    return m;
+}
+
+static uint64_t esc_expr(T *t, Node *e);
+
+/* The same for what a call can raise. Agda cannot see that the handlers cover
+   every class a called def raises, so unless one of them catches everything the
+   def being written still counts as able to raise. */
+static uint64_t uncaught_call(T *t, Node *e, AF *chain) {
+    uint64_t m = esc_expr(t, e);
+    if (!m || !chain) return m;
+    uint64_t left = uncaught(t, m | RAISES_OTHER, chain);
+    return left & RAISES_OTHER ? uncaught(t, m, chain) | RAISES_OTHER : 0;
+}
+
+static uint64_t esc_expr(T *t, Node *e) {
+    if (!e) return 0;
+    uint64_t m = 0;
+    switch (e->kind) {
+    case E_CALL:
+        m = esc_expr(t, e->a);
+        for (int i = 0; i < e->n[0]; i++) m |= esc_expr(t, e->l[0][i]);
+        if (e->a->kind == E_NAME) {
+            Sym *s = find_sym(t, AS_STR(e->a->val));
+            if (s && s->kind == SK_FUNC) m |= s->raises;
+        } else if (e->a->kind == E_ATTR) {
+            /* a method: the receiver's class is not known here, so every method of that name counts */
+            for (int i = 0; i < t->nsyms; i++)
+                if (t->syms[i]->mname && str_eq(t->syms[i]->mname, AS_STR(e->a->val))) m |= t->syms[i]->raises;
+            for (int i = 0; i < t->nsyms; i++)
+                if (t->syms[i]->kind == SK_RECORD)
+                    for (int j = 0; j < t->syms[i]->nmethods; j++)
+                        if (str_eq(t->syms[i]->methods[j]->mname, AS_STR(e->a->val))) m |= t->syms[i]->methods[j]->raises;
+        }
+        return m;
+    case E_BINOP: case E_SUBSCR: return esc_expr(t, e->a) | esc_expr(t, e->b);
+    case E_IFEXP: return esc_expr(t, e->a) | esc_expr(t, e->b) | esc_expr(t, e->c);
+    case E_UNARY: case E_NOT: case E_ATTR: case E_KEYWORD: case E_STARRED: case E_FORMATTED: return esc_expr(t, e->a);
+    case E_COMPARE: m = esc_expr(t, e->a); /* fall through */
+    case E_BOOLOP: case E_TUPLE: case E_LIST: case E_FSTRING:
+        for (int i = 0; i < e->n[0]; i++) m |= esc_expr(t, e->l[0][i]);
+        return m;
+    case E_DICT:
+        for (int i = 0; i < e->n[0]; i++) m |= esc_expr(t, e->l[0][i]) | esc_expr(t, e->l[1][i]);
+        return m;
+    case E_LISTCOMP: case E_GENEXP:
+        m = esc_expr(t, e->a);
+        for (int i = 0; i < e->n[0]; i++) m |= esc_expr(t, e->l[0][i]->b);
+        return m;
+    default: return 0;
+    }
+}
+
+/* The exceptions that can get out of the statements. `cur` is what a bare
+   `raise` raises: the classes the enclosing except clause catches. */
+static uint64_t esc_stmts(T *t, Node **l, int n, AF *chain, uint64_t cur) {
+    uint64_t m = 0;
+    for (int i = 0; i < n; i++) {
+        Node *s = l[i];
+        switch (s->kind) {
+        case S_RAISE: {
+            Node *msg;
+            uint64_t one = s->a ? 1ULL << raise_class(t, s->a, &msg) : cur;
+            m |= uncaught(t, one, chain) | uncaught_call(t, s->a, chain);
+            break;
+        }
+        case S_TRY: {
+            AF inner = {s, chain};
+            m |= esc_stmts(t, s->l[0], s->n[0], &inner, cur) | esc_stmts(t, s->l[2], s->n[2], chain, cur);
+            for (int j = 0; j < s->n[1]; j++)
+                m |= esc_stmts(t, s->l[1][j]->l[0], s->l[1][j]->n[0], chain, handler_mask(t, s->l[1][j]));
+            break;
+        }
+        case S_IF: case S_WHILE:
+            m |= uncaught_call(t, s->a, chain) | esc_stmts(t, s->l[0], s->n[0], chain, cur) | esc_stmts(t, s->l[1], s->n[1], chain, cur);
+            break;
+        case S_FOR: m |= uncaught_call(t, s->b, chain) | esc_stmts(t, s->l[0], s->n[0], chain, cur); break;
+        case S_MATCH:
+            m |= uncaught_call(t, s->a, chain);
+            for (int j = 0; j < s->n[0]; j++) m |= esc_stmts(t, s->l[0][j]->l[0], s->l[0][j]->n[0], chain, cur);
+            break;
+        case S_EXPR: case S_RETURN: case S_ASSERT: m |= uncaught_call(t, s->a, chain); break;
+        case S_ASSIGN: m |= uncaught_call(t, s->a, chain); break;
+        case S_ANNASSIGN: case S_AUGASSIGN: m |= uncaught_call(t, s->b, chain); break;
+        default: break;
+        }
+    }
+    return m;
+}
+
+/* Works out, for every def in the file, which exceptions it can let out. A def
+   that calls one that raises may raise too, so this goes round until nothing changes. */
+static void find_raises(T *t) {
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < t->nsyms; i++) {
+            Sym *s = t->syms[i];
+            if (s->kind != SK_FUNC || !s->node || s->node->kind != S_DEF || s->trusted || s->external || s->foreign) continue;
+            uint64_t m = esc_stmts(t, s->node->l[0], s->node->n[0], NULL, 0);
+            if (m != s->raises) { s->raises = m; changed = true; }
+        }
+    }
 }
 
 /* ---------- what the translator knows about types ---------- */
@@ -1461,6 +1661,7 @@ static const char *builtin_call(T *t, Node *n, const char *b, Ty *want) {
         if (tk(at) == TK_INT) return af("(showInt %s)", E(t, a[0]));
         if (tk(at) == TK_NAT) return af("(showNat %s)", E(t, a[0]));
         if (tk(at) == TK_BOOL) return af("(showBool %s)", E(t, a[0]));
+        if (tk(at) == TK_EXN) return af("(Exn.message %s)", E(t, a[0]));   /* str(e) is the message */
         if (t->c.printing) return af("(shown %s)", E(t, a[0]));
         terr(t, n->line, "outside print(...), str(...) is available for Nat, int, bool and str in a checked file");
     }
@@ -1480,6 +1681,11 @@ static const char *builtin_call(T *t, Node *n, const char *b, Ty *want) {
 static const char *record_call(T *t, Sym *s, Node *n, Ty *want);
 static const char *method_call(T *t, Node *n);
 static bool changing_method(Str *m);
+
+__attribute__((noreturn)) static void raising_here(T *t, Node *n, const char *name) {
+    terr(t, n->line, "%s() can raise, so the call has to stand on its own: as a statement, as the whole right side of "
+                     "an assignment, or as the whole value of a return. Give its result a name on the line before, then use the name.", name);
+}
 
 /* The arguments of a call to a def, in the order of its parameters: the ones
    given by position, the ones given by name, and defaults for the rest. `skip`
@@ -1575,6 +1781,7 @@ static const char *call_expr(T *t, Node *n, Ty *want) {
             t->nholes++;
             return "{!!}";
         }
+        if (s && s->kind == SK_FUNC && s->raises && n != t->allow_raise) raising_here(t, n, s->py->s);
         if (s && (s->kind == SK_FUNC || s->kind == SK_CTOR) && !s->prelude) {
             const char *args = def_args(t, s, n, 0, want);
             return *args ? af("(%s%s)", s->agda, args) : s->agda;
@@ -1885,6 +2092,7 @@ static const char *fstring_expr(T *t, Node *n) {
             else if (plain && tk(ty) == TK_NAT) one = af("(showNat %s)", E(t, p->a));
             else if (plain && tk(ty) == TK_INT) one = af("(showInt %s)", E(t, p->a));
             else if (plain && tk(ty) == TK_BOOL) one = af("(showBool %s)", E(t, p->a));
+            else if (plain && tk(ty) == TK_EXN) one = af("(Exn.message %s)", E(t, p->a));
             else if (t->c.printing) one = af("(shown %s)", E(t, p->a));
             else
                 terr(t, p->line, "outside print(...), an f-string in a checked file can hold str, Nat, int and bool values. "
@@ -2107,6 +2315,7 @@ static void emit_func_sig(T *t, Sym *s) {
         text = af("%s(%s : %s) ", text, s->p_names[i], ty);
     }
     const char *ret = tr_type(t, def->b);
+    if (s->raises) ret = af("(Exc %s)", ret);
     t->c = saved;
     /* A @trusted def has no Agda body: its type is all Agda is told. */
     const char *kw = s->trusted ? "postulate " : "";
@@ -2370,6 +2579,7 @@ static const char *method_call(T *t, Node *n) {
         Sym *ms = method_of(t, rt->sym, m);
         if (ms) {
             need(t, ms, n->line);
+            if (ms->raises && n != t->allow_raise) raising_here(t, n, m->s);
             const char *self = ER(t, recv, NULL);
             return af("(%s %s%s)", ms->agda, self, def_args(t, ms, n, 1, NULL));
         }
@@ -2442,6 +2652,8 @@ static K *k_push(Node **l, int n, K *rest) {
     if (!n) return k_norm(rest);
     K *k = arena_alloc(sizeof(K));
     k->l = l; k->n = n; k->next = rest;
+    k->ctx = g_ctx;
+    if (rest && rest->ctx == g_ctx) { k->exn = rest->exn; k->exn_class = rest->exn_class; }
     return k;
 }
 static K *k_tail(K *k) {
@@ -2524,7 +2736,7 @@ static bool has_split(K *k) {
     for (k = k_norm(k); k; k = k->next)
         for (int i = k->i; i < k->n; i++) {
             if (stmt_splits(k->l[i])) return true;
-            if (k->l[i]->kind == S_RETURN) return false;
+            if (k->l[i]->kind == S_RETURN || k->l[i]->kind == S_RAISE || k->l[i]->kind == S_TRY) return false;
         }
     return false;
 }
@@ -2637,6 +2849,14 @@ static void assigned(T *t, Names *ns, Node **l, int n, bool all) {
             else { Var *v = find_var(t, AS_STR(s->a->val)); if (v && tk(v->ty) == TK_LIST) names_add(ns, v->py); }
             break;
         case S_DEF: if (all) names_add(ns, AS_STR(s->val)); break;
+        case S_TRY:
+            assigned(t, ns, s->l[0], s->n[0], all);
+            assigned(t, ns, s->l[2], s->n[2], all);
+            for (int j = 0; j < s->n[1]; j++) {
+                if (all && s->l[1][j]->val) names_add(ns, AS_STR(s->l[1][j]->val));
+                assigned(t, ns, s->l[1][j]->l[0], s->l[1][j]->n[0], all);
+            }
+            break;
         case S_IF: assigned(t, ns, s->l[0], s->n[0], all); assigned(t, ns, s->l[1], s->n[1], all); break;
         case S_MATCH:
             for (int j = 0; j < s->n[0]; j++) {
@@ -2651,10 +2871,19 @@ static void assigned(T *t, Names *ns, Node **l, int n, bool all) {
     }
 }
 
+static T *g_T;   /* the file being translated, for has_return */
+
+/* Whether the statements can leave the def: by return, or by an exception. */
 static bool has_return(Node **l, int n) {
     for (int i = 0; i < n; i++) {
         Node *s = l[i];
-        if (s->kind == S_RETURN) return true;
+        if (s->kind == S_RETURN || s->kind == S_RAISE) return true;
+        if (s->kind == S_TRY) {
+            if (has_return(s->l[0], s->n[0]) || has_return(s->l[2], s->n[2])) return true;
+            for (int j = 0; j < s->n[1]; j++) if (has_return(s->l[1][j]->l[0], s->l[1][j]->n[0])) return true;
+        }
+        if ((s->kind == S_EXPR || s->kind == S_ASSIGN) && esc_expr(g_T, s->a)) return true;
+        if ((s->kind == S_ANNASSIGN || s->kind == S_AUGASSIGN) && esc_expr(g_T, s->b)) return true;
         if (s->kind == S_IF || s->kind == S_FOR || s->kind == S_WHILE) {
             if (has_return(s->l[0], s->n[0]) || has_return(s->l[1], s->n[1])) return true;
         } else if (s->kind == S_MATCH)
@@ -2787,6 +3016,11 @@ static void scan_ints(T *t, Names *ints, Node **l, int n) {
             scan_ints(t, ints, s->l[0], s->n[0]);
             break;
         case S_WHILE: scan_expr(t, s->a); scan_ints(t, ints, s->l[0], s->n[0]); break;
+        case S_TRY:
+            scan_ints(t, ints, s->l[0], s->n[0]);
+            for (int j = 0; j < s->n[1]; j++) scan_ints(t, ints, s->l[1][j]->l[0], s->l[1][j]->n[0]);
+            scan_ints(t, ints, s->l[2], s->n[2]);
+            break;
         case S_IF: scan_expr(t, s->a); scan_ints(t, ints, s->l[0], s->n[0]); scan_ints(t, ints, s->l[1], s->n[1]); break;
         case S_MATCH: scan_expr(t, s->a); for (int j = 0; j < s->n[0]; j++) scan_ints(t, ints, s->l[0][j]->l[0], s->l[0][j]->n[0]); break;
         default: break;
@@ -2965,7 +3199,6 @@ __attribute__((noreturn)) static void bad_stmt(T *t, Node *s, bool top) {
     switch (s->kind) {
     case S_WHILE: case S_FOR: what = "a loop"; break;
     case S_BREAK: case S_CONTINUE: what = "break or continue outside a loop"; break;
-    case S_TRY: case S_RAISE: what = "exception handling"; break;
     case S_AUGASSIGN: what = "an assignment like +="; break;
     case S_CLASS: what = "a nested class"; break;
     case S_GLOBAL: case S_NONLOCAL: what = "global or nonlocal"; break;
@@ -3290,6 +3523,10 @@ static bool setitem_only(T *t, Node **l, int n, Str *name) {
                 if (!setitem_only(t, s->l[0][j]->l[0], s->l[0][j]->n[0], name)) return false;
             }
             break;
+        case S_TRY:
+            if (!setitem_only(t, s->l[0], s->n[0], name) || !setitem_only(t, s->l[2], s->n[2], name)) return false;
+            for (int j = 0; j < s->n[1]; j++) if (!setitem_only(t, s->l[1][j]->l[0], s->l[1][j]->n[0], name)) return false;
+            break;
         default: break;
         }
     }
@@ -3298,6 +3535,12 @@ static bool setitem_only(T *t, Node **l, int n, Str *name) {
 static void loop_emit(T *t, Node *s, Tail *outer, Loop *L);
 static void sx(T *t, K *k, Tail *tl, int line);
 static bool is_print(T *t, Node *s);
+static Node *raising_stmt(T *t, Node *s, Str **name, Node **ann);
+static uint64_t call_mask(T *t, Node *c);
+static Node *find_handler(T *t, Try *ctx, int cls, Try **where);
+static void run_handler(T *t, Node *h, Try *where, const char *val, int cls, Tail *tl, int line);
+static void dispatch(T *t, Try *ctx, const char *e, uint64_t mask, Tail *tl, int line);
+static void not_caught(T *t, int line);
 
 /* A statement that is run for what it does and gives no value to the rest: a
    call, or print(...). Returns the Agda text to type-check, or NULL when there is
@@ -3402,10 +3645,15 @@ static const char *local_def(T *t, Node *def, Ty **ty) {
     fty->a = ty_ann(t, def->b, NULL, NULL);
     scan_body(t, def->l[0], def->n[0]);
     t->c.ret_ty = fty->a;
+    t->c.fn_raises = false;
+    t->c.in_local = true;
+    Try *outer_ctx = g_ctx;
+    g_ctx = NULL;
     Tail tl = {0};
     tl.ret = fty->a;
     t->cur = &body;
     sx(t, k_push(def->l[0], def->n[0], NULL), &tl, def->line);
+    g_ctx = outer_ctx;
     t->cur = cur;
     /* what the body handed on, and which names it used, stay known outside it */
     Leak *leaks = t->c.leaks;
@@ -3431,6 +3679,102 @@ static const char *local_def(T *t, Node *def, Ty **ty) {
     const char *text = astr(b.s);
     sb_free(&b);
     return p->n ? af("(%s (\xCE\xBB%s \xE2\x86\x92\n%s))", w[p->n], binders, text) : af("(%s (\n%s))", w[0], text);
+}
+
+/* A statement that is one call to a def that can raise: f(x), y = f(x), y: T = f(x)
+   or return f(x). Returns the call. */
+static uint64_t call_mask(T *t, Node *c) {
+    if (c->kind != E_CALL) return 0;
+    if (c->a->kind == E_NAME && !find_var(t, AS_STR(c->a->val))) {
+        Sym *s = find_sym(t, AS_STR(c->a->val));
+        return s && s->kind == SK_FUNC ? s->raises : 0;
+    }
+    if (c->a->kind == E_ATTR) {
+        Ty *r = ty_of(t, c->a->a);
+        Sym *m = tk(r) == TK_REC ? method_of(t, r->sym, AS_STR(c->a->val)) : NULL;
+        return m ? m->raises : 0;
+    }
+    return 0;
+}
+
+static Node *raising_stmt(T *t, Node *s, Str **name, Node **ann) {
+    Node *c = NULL;
+    if (s->kind == S_EXPR || s->kind == S_RETURN) c = s->a;
+    else if (s->kind == S_ASSIGN && s->n[0] == 1 && s->l[0][0]->kind == E_NAME) { c = s->a; *name = AS_STR(s->l[0][0]->val); }
+    else if (s->kind == S_ANNASSIGN && s->a->kind == E_NAME && s->b) { c = s->b; *name = AS_STR(s->a->val); *ann = s->c; }
+    return c && call_mask(t, c) ? c : NULL;
+}
+
+/* The except clause that catches class `cls` (or, for cls < 0, an exception of a
+   class not known here), looking outward from the try `ctx`. */
+static Node *find_handler(T *t, Try *ctx, int cls, Try **where) {
+    for (Try *tr = ctx; tr; tr = tr->outer)
+        for (int i = 0; i < tr->node->n[1]; i++) {
+            uint64_t m = handler_mask(t, tr->node->l[1][i]);
+            if (cls < 0 ? (m & RAISES_OTHER) != 0 : (m >> cls) & 1) { *where = tr; return tr->node->l[1][i]; }
+        }
+    return NULL;
+}
+
+__attribute__((noreturn)) static void bad_stmt(T *t, Node *s, bool top);
+
+/* An exception gets out of the def being written. */
+static void not_caught(T *t, int line) {
+    if (t->c.in_local) terr(t, line, "a def inside a function cannot raise in a checked file; make it a def at the top level");
+    if (!t->c.fn_raises) terr(t, line, "internal: an exception escapes a def the checker took to be one that cannot raise");
+}
+
+/* Runs an except block for the exception `val`, then what follows its try. */
+static void run_handler(T *t, Node *h, Try *where, const char *val, int cls, Tail *tl, int line) {
+    Mark m = mark(t);
+    K *after = where->after;
+    if (h->val) {
+        const char *a = fresh(t, AS_STR(h->val)->s);
+        o_put(t->cur, h->line, af("  let %s = %s in\n", a, val));
+        bindv(t, AS_STR(h->val), a, false, &ty_exn, h->line);
+        val = a;
+        /* a marker after the block: the name is gone from there on */
+        Node *un = synth(S_PASS, h->line);
+        un->op = 77; un->val = (Obj *)AS_STR(h->val);
+        Node **one = arena_alloc(sizeof(Node *));
+        one[0] = un;
+        K *mk = arena_alloc(sizeof(K));
+        mk->l = one; mk->n = 1; mk->next = after; mk->ctx = where->outer;
+        after = mk;
+    }
+    K *seg = arena_alloc(sizeof(K));
+    seg->l = h->l[0]; seg->n = h->n[0]; seg->next = after; seg->ctx = where->outer; seg->exn = val; seg->exn_class = cls;
+    g_ctx = where->outer;
+    sx(t, k_norm(seg), tl, line);
+    reset(t, m);
+}
+
+/* A call came back with the exception `e`. Its class is one of `mask`, or one
+   not known here. Writes the test that sends it to the right except block. */
+static void dispatch(T *t, Try *ctx, const char *e, uint64_t mask, Tail *tl, int line) {
+    if (!ctx) {
+        not_caught(t, line);
+        o_put(t->cur, line, af("  %s\n", ret_text(tl, af("(err %s)", e))));
+        return;
+    }
+    o_put(t->cur, line, af("  (case\xE2\x82\x80 (Exn.kind %s) of \xCE\xBB {\n", e));
+    Try *where = NULL;
+    for (int c = 0; c < g_nexc; c++) {
+        if (!((mask >> c) & 1)) continue;
+        Node *h = find_handler(t, ctx, c, &where);
+        if (!h) continue;
+        o_put(t->cur, line, af("  %s \xE2\x86\x92\n", str_lit(g_exc[c].name)));
+        run_handler(t, h, where, e, c, tl, line);
+        o_put(t->cur, line, "  ;\n");
+    }
+    o_put(t->cur, line, "  _ \xE2\x86\x92\n");
+    Node *h = find_handler(t, ctx, -1, &where);
+    if (h) run_handler(t, h, where, e, -1, tl, line);
+    else {
+        not_caught(t, line);
+        o_put(t->cur, line, af("  %s\n", ret_text(tl, af("(err %s)", e))));
+    }
+    o_put(t->cur, line, "  })\n");
 }
 
 /* Tries the statements after a match as its last case. They may read a name that
@@ -3466,7 +3810,7 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         if (!k) {
             if (!tl->loop) {
                 if (tk(tl->ret) != TK_NONE) terr(t, line, "this function can reach its end without a return");
-                o_put(t->cur, line, "  tt\n");
+                o_put(t->cur, line, t->c.fn_raises ? "  (ok tt)\n" : "  tt\n");
                 return;
             }
             const char *st = state_text(t, tl, line);
@@ -3479,11 +3823,49 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         }
         Node *s = k->l[k->i];
         K *rest = k_tail(k);
+        g_ctx = k->ctx;
+        if (s->kind == S_PASS && s->op == 77) {   /* the end of an except block: its variable is gone, as in Python */
+            bind(t, AS_STR(s->val), "_", false, false, s->line);
+            t->c.env->gone = true;
+            k = rest;
+            continue;
+        }
         if (skippable(s)) { k = rest; continue; }
         line = s->line;
         Node **ex;
         int nex = expand_assign(t, s, &ex);
         if (nex) { k = k_push(ex, nex, rest); continue; }
+        Str *rname = NULL;
+        Node *rann = NULL, *rcall = raising_stmt(t, s, &rname, &rann);
+        if (rcall) {
+            uint64_t mask = esc_expr(t, rcall->a->kind == E_ATTR ? rcall : rcall) ;
+            mask = call_mask(t, rcall);
+            Ty *rty = rann ? ty_ann(t, rann, NULL, NULL) : ty_of(t, rcall);
+            t->allow_raise = rcall;
+            const char *call = EW(t, rcall, s->kind == S_RETURN ? tl->ret : rty);
+            t->allow_raise = NULL;
+            if (s->kind == S_RETURN) no_more(t, k, "return");
+            if (s->kind == S_RETURN && !k->ctx) {
+                not_caught(t, s->line);
+                o_put(t->cur, s->line, af("  %s\n", ret_text(tl, call)));   /* its result is this def's result */
+                return;
+            }
+            const char *e = fresh(t, "e"), *x = fresh(t, rname ? rname->s : "v");
+            o_put(t->cur, s->line, af("  (case\xE2\x82\x80 %s of \xCE\xBB { (err %s) \xE2\x86\x92\n", call, e));
+            Mark m = mark(t);
+            dispatch(t, k->ctx, e, mask, tl, s->line);
+            reset(t, m);
+            g_ctx = k->ctx;
+            o_put(t->cur, s->line, af("  ; (ok %s) \xE2\x86\x92\n", x));
+            if (s->kind == S_RETURN) o_put(t->cur, s->line, af("  %s\n", ret_text(tl, t->c.fn_raises ? af("(ok %s)", x) : x)));
+            else {
+                if (rname) bindv(t, rname, x, false, rty, s->line);
+                sx(t, rest, tl, s->line);
+            }
+            reset(t, m);
+            o_put(t->cur, s->line, "  })\n");
+            return;
+        }
         switch (s->kind) {
         case S_DEF: {
             Ty *fty;
@@ -3497,8 +3879,48 @@ static void sx(T *t, K *k, Tail *tl, int line) {
         case S_RETURN:
             if (!s->a && tk(tl->ret) != TK_NONE) terr(t, s->line, "return needs a value in a function that does not return None");
             no_more(t, k, "return");
-            o_put(t->cur, s->line, af("  %s\n", ret_text(tl, s->a ? EW(t, s->a, tl->ret) : "tt")));
+            {
+                const char *v = s->a ? EW(t, s->a, tl->ret) : "tt";
+                o_put(t->cur, s->line, af("  %s\n", ret_text(tl, t->c.fn_raises ? af("(ok %s)", v) : v)));
+            }
             return;
+        case S_RAISE: {
+            no_more(t, k, "raise");
+            if (s->b) terr(t, s->line, "'raise ... from ...' is not available in a checked file");
+            int cls;
+            const char *val;
+            if (!s->a) {
+                if (!k->exn) terr(t, s->line, "a bare 'raise' is written inside an except block");
+                cls = k->exn_class; val = k->exn;
+            } else {
+                Node *msg;
+                cls = raise_class(t, s->a, &msg);
+                if (msg && tk(ty_of(t, msg)) != TK_STR) terr(t, s->line, "the message of an exception is a str in a checked file");
+                val = af("(exn %s %s)", str_lit(g_exc[cls].name), msg ? E(t, msg) : "\"\"");
+            }
+            Try *where = NULL;
+            Node *h = find_handler(t, k->ctx, cls, &where);
+            if (h) { run_handler(t, h, where, val, cls, tl, s->line); return; }
+            not_caught(t, s->line);
+            o_put(t->cur, s->line, af("  %s\n", ret_text(tl, af("(err %s)", val))));
+            return;
+        }
+        case S_TRY: {
+            if (s->n[3]) terr(t, s->line, "'finally' is not available in a checked file yet");
+            if (!s->n[1]) terr(t, s->line, "a try needs at least one except clause");
+            for (int j = 0; j < s->n[1]; j++) handler_mask(t, s->l[1][j]);
+            /* Nothing is written for the try itself. Its body is translated with the
+               handlers in reach: a raise goes straight to its handler, and a call
+               that can raise is followed by a test of what came back. */
+            Try *tr = arena_alloc(sizeof(Try));
+            tr->node = s; tr->outer = k->ctx;
+            g_ctx = k->ctx;
+            tr->after = k_push(s->l[2], s->n[2], rest);   /* else: after the body, outside the handlers */
+            g_ctx = tr;
+            k = k_push(s->l[0], s->n[0], tr->after);
+            if (k == tr->after) g_ctx = k ? k->ctx : NULL;
+            continue;
+        }
         case S_ASSERT: {
             bool pol;
             const char *core, *p = assert_proof(t, s, &core, &pol);
@@ -3751,6 +4173,10 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
             auto_lo = lo; auto_hi = hi; auto_step = step;
         }
     }
+    Try *loop_ctx = g_ctx;
+    if (loop_ctx && esc_stmts(t, s->l[0], s->n[0], NULL, ~0ULL))
+        terr(t, s->line, "this loop is inside a try, and its body can raise. That is not available in a checked file yet. "
+                         "Move the loop into a def of its own and call it from the try.");
     Names as = {0}, mu = {0}, live = {0};
     assigned(t, &as, s->l[0], s->n[0], true);
     assigned(t, &mu, s->l[0], s->n[0], false);
@@ -3889,7 +4315,9 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
         }
     }
     Leak *entry = t->c.leaks;
+    g_ctx = NULL;
     sx(t, k_push(body, nb, NULL), &tl, s->line);
+    g_ctx = loop_ctx;
     o_put(t->cur, s->line, "  }))\n");
     t->c.loop_level--;
     t->c.leaks = entry;
@@ -3943,9 +4371,10 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
     fn_tail.ret = t->c.ret_ty;
     for (;;) {
         k = k_norm(k);
+        g_ctx = NULL;
         if (!k) {
             if (tk(fn_tail.ret) != TK_NONE) terr(t, line, "this function can reach its end without a return");
-            o_put(t->cur, line, af("%s =\n  tt\n", lhs));
+            o_put(t->cur, line, af(t->c.fn_raises ? "%s =\n  (ok tt)\n" : "%s =\n  tt\n", lhs));
             return;
         }
         Node *s = k->l[k->i];
@@ -3959,6 +4388,29 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
         Node **ex;
         int nex = expand_assign(t, s, &ex);
         if (nex) { k = k_push(ex, nex, rest); continue; }
+        if (s->kind == S_TRY || s->kind == S_RAISE) {
+            /* from a try on, the rest of the def is one expression */
+            o_put(t->cur, s->line, af("%s =\n", lhs));
+            sx(t, k, &fn_tail, line);
+            return;
+        }
+        Str *rname = NULL;
+        Node *rann = NULL, *rcall = s->kind == S_RETURN ? NULL : raising_stmt(t, s, &rname, &rann);
+        if (rcall) {
+            /* a column for what the call gave back: an exception leaves the def, a value goes on */
+            Ty *rty = rann ? ty_ann(t, rann, NULL, NULL) : ty_of(t, rcall);
+            t->allow_raise = rcall;
+            const char *call = EW(t, rcall, rty);
+            t->allow_raise = NULL;
+            not_caught(t, s->line);
+            const char *e = fresh(t, "e"), *x = lhs_var(t, fresh(t, rname ? rname->s : "v"));
+            o_put(t->cur, s->line, af("%s with %s\n", lhs, call));
+            o_put(t->cur, s->line, af("%s | err %s =\n  (err %s)\n", lhs, e, e));
+            lhs = af("%s | ok %s", lhs, x);
+            if (rname) bindv(t, rname, x, true, rty, s->line);
+            k = rest;
+            continue;
+        }
         switch (s->kind) {
         case S_DEF: {
             /* the name stands for the function value from here on */
@@ -4283,6 +4735,8 @@ static void emit_func_body(T *t, Sym *s) {
     }
     for (int i = 0; i < np; i++) fact_from_ann(t, def->params->ann[i], s->p_names[i]);
     t->c.ret_ty = ty_ann(t, def->b, NULL, NULL);
+    t->c.fn_raises = s->raises != 0;
+    g_ctx = NULL;
     collect_locals(t, def->l[0], def->n[0]);
     scan_body(t, def->l[0], def->n[0]);
     clauses(t, lhs, k_push(def->l[0], def->n[0], NULL), def->line);
@@ -4424,6 +4878,17 @@ static void prepass(T *t, Node **l, int n, bool guard) {
             declare(t, name, s->line);
             bool ok = s->n[2] == 1 && s->l[2][0]->kind == E_NAME && !find_sym(t, AS_STR(s->l[2][0]->val)) &&
                       sym_is(prelude_sym(t, AS_STR(s->l[2][0]->val)), "Data") && !s->n[1];
+            int base = s->n[2] == 1 && s->l[2][0]->kind == E_NAME && !s->n[1] && !s->n[3] ? exc_find(AS_STR(s->l[2][0]->val)) : -1;
+            if (base >= 0) {
+                /* class MyError(Exception): ...   a new exception class */
+                if (!trivial_body(s->l[0], s->n[0])) terr(t, s->line, "the body of an exception class is '...' in a checked file");
+                if (exc_find(name) >= 0) terr(t, s->line, "an exception class called '%s' already exists", name->s);
+                if (g_nexc >= 62) terr(t, s->line, "too many exception classes");
+                exc_add(name->s, base, true);
+                Sym *x = add_sym(t, name, SK_EXC, 0, s, s->line);
+                x->agda = top_name(name->s);
+                break;
+            }
             bool rec = !s->n[2] && s->n[1] == 1 && s->l[1][0]->kind == E_NAME && !find_sym(t, AS_STR(s->l[1][0]->val)) &&
                        sym_is(prelude_sym(t, AS_STR(s->l[1][0]->val)), "dataclass");
             if (rec) { declare_record(t, s); break; }
@@ -4561,6 +5026,7 @@ static void toplevel(T *t, Node **l, int n) {
         case S_IMPORTFROM: case S_PASS: break;
         case S_CLASS: {
             Sym *d = find_sym(t, AS_STR(s->val));
+            if (d->kind == SK_EXC) break;
             if (d->kind == SK_RECORD) {
                 if (!d->body_done) emit_record(t, d);
                 for (int j = 0; j < d->nmethods; j++) if (!d->methods[j]->body_done) emit_func_body(t, d->methods[j]);
@@ -4592,7 +5058,12 @@ static void toplevel(T *t, Node **l, int n) {
                 terr(t, s->line, "an expression statement at the top level of a checked file is a call");
             begin_executed(t, s);
             if (is_print(t, s)) top_print(t, s, "", "");
-            else o_put(&t->out, s->line, af("_ = %s\n", E(t, s->a)));
+            else {
+                /* a call on its own may raise: the exception ends the program, as in Python */
+                t->allow_raise = s->a;
+                o_put(&t->out, s->line, af("_ = %s\n", E(t, s->a)));
+                t->allow_raise = NULL;
+            }
             break;
         case S_FOR:
             begin_executed(t, s);
@@ -4969,6 +5440,8 @@ static T *check_module(Node *m, const char *filename, bool main) {
     read_imports(t, m->l[0], m->n[0]);
     load_imports(t);
     prepass(t, m->l[0], m->n[0], false);
+    g_T = t;
+    find_raises(t);
     if (!t->future_ann)
         terr(t, 1, "a checked file must start with: from __future__ import annotations");
     toplevel(t, m->l[0], m->n[0]);
@@ -5041,6 +5514,7 @@ static T *check_module(Node *m, const char *filename, bool main) {
 
 void agda_check(Node *m, const char *filename) {
     /* The file itself is in the table, so a file that imports it back is noticed. */
+    exc_init();
     nmods = 1;
     mods[0].path = filename; mods[0].busy = true; mods[0].t = NULL;
     check_module(m, filename, true);
