@@ -34,6 +34,7 @@ if command -v "${PYC_AGDA:-agda}" >/dev/null 2>&1; then
         fi
     done
     for t in tests/rejected/*.py; do
+        case "$t" in */helper_*) continue ;; esac   # files that the tests import
         out=$("$PYC" "$t" 2>"$tmp/stderr" </dev/null); code=$?
         if [ $code -eq 1 ] && [ -z "$out" ] && cmp -s "$tmp/stderr" "${t%.py}.expected"; then pass=$((pass + 1))
         else

@@ -167,6 +167,9 @@ typedef struct {
     bool *fact_used; int nfacts, fcap;   /* whether anything asked for the proof of each `if` */
     bool unsafe;        /* the file has a @trusted def, or imports a file that has */
     const char *imports; /* the `open import` lines for the checked files this one imports */
+    int nimport_lines;
+    Node **import_stmts; int nimport_stmts;   /* `from other_file import ...` statements */
+    const char *module;  /* the Agda module this file became */
     Sym *fn;            /* the function whose body is being written */
     jmp_buf *try_jmp;   /* set while translating code that may turn out to be unreachable */
 } T;
@@ -2384,10 +2387,18 @@ typedef struct {
     bool *stale;               /* loop: the name was shared by the end of some pass */
     Node *dec;                 /* while: its decreases(...) statement */
     Ty *ret;                   /* what the function returns */
+    Leak *entry, *seen;        /* loop: what was shared on entry, and what any pass shared since */
 } Tail;
 
 static const char *state_text(T *t, Tail *tl, int line) {
     const char *text = NULL;
+    /* The paths through the body meet again after the loop. A name that any one
+       of them handed on is shared from then on. */
+    for (Leak *l = t->c.leaks; l && l != tl->entry; l = l->next) {
+        Leak *c = arena_alloc(sizeof(Leak));
+        c->id = l->id; c->next = tl->seen;
+        tl->seen = c;
+    }
     for (int i = tl->n - 1; i >= 0; i--) {
         Var *v = find_var(t, tl->carried[i]);
         if (!v || v->dead)
@@ -2649,6 +2660,7 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
     Tail tl = {0};
     tl.loop = true; tl.is_while = is_while; tl.carried = L->carried; tl.n = L->n; tl.dec = dec; tl.ret = outer->ret;
     tl.stale = arena_alloc((size_t)L->n + 1);
+    tl.entry = t->c.leaks;
     const char **names = arena_alloc((size_t)(L->n + 1) * sizeof(char *));
     for (int i = 0; i < L->n; i++) names[i] = fresh(t, L->carried[i]->s);
     for (int i = L->n - 1; i >= 0; i--) spat = spat ? af("(%s , %s)", names[i], spat) : names[i];
@@ -2674,8 +2686,15 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
         const char *pat = target_pat(t, s->a, elem);
         o_put(t->cur, s->line, af("  (forEach %s %s (\xCE\xBB { %s %s \xE2\x86\x92\n", head, init, pat, spat));
     }
+    Leak *entry = t->c.leaks;
     sx(t, k_push(body, nb, NULL), &tl, s->line);
     o_put(t->cur, s->line, "  }))\n");
+    t->c.leaks = entry;
+    for (Leak *l = tl.seen; l; l = l->next) {
+        Leak *c = arena_alloc(sizeof(Leak));
+        c->id = l->id; c->next = t->c.leaks;
+        t->c.leaks = c;
+    }
     for (int i = 0; i < L->n; i++) {
         if (tl.stale[i] && names_has(&mu, L->carried[i]))
             terr(t, s->line, "inside this loop '%s' is changed in place and is also shared (given another name, passed on, "
@@ -3051,7 +3070,13 @@ static void read_imports(T *t, Node **l, int n) {
                 ni[t->nimported++] = AS_STR(a->val);
                 t->imported = ni;
             }
-        } else terr(t, s->line, "a checked file can import only from dependent and __future__");
+        } else {
+            /* another checked file: read once every import has been seen */
+            Node **ni = arena_alloc((size_t)(t->nimport_stmts + 1) * sizeof *ni);
+            if (t->nimport_stmts) memcpy(ni, t->import_stmts, (size_t)t->nimport_stmts * sizeof *ni);
+            ni[t->nimport_stmts++] = s;
+            t->import_stmts = ni;
+        }
     }
 }
 
@@ -3316,7 +3341,7 @@ static void mkdirs(char *path) {
 }
 
 /* Runs `agda file` in dir. Returns its exit status, or -1 when agda could not be started. */
-static int run_agda(const char *dir, const char *file, char **output) {
+static int run_agda(const char *dir, const char *file, const char *commands, char **output) {
     const char *agda = getenv("PYC_AGDA");
     if (!agda || !*agda) agda = "agda";
     int fd[2];
@@ -3329,7 +3354,11 @@ static int run_agda(const char *dir, const char *file, char **output) {
         dup2(fd[1], 2);
         close(fd[0]); close(fd[1]);
         if (chdir(dir) < 0) _exit(126);
-        execlp(agda, agda, "--no-libraries", file, (char *)NULL);
+        if (commands) {
+            /* interaction mode: the commands are read from a file */
+            if (!freopen(commands, "r", stdin)) _exit(126);
+            execlp(agda, agda, "--interaction", "--no-libraries", (char *)NULL);
+        } else execlp(agda, agda, "--no-libraries", file, (char *)NULL);
         _exit(127);
     }
     close(fd[1]);
@@ -3444,31 +3473,200 @@ bool agda_wanted(Node *m) {
     return false;
 }
 
-/* Checks a parsed module. Returns when Agda accepts it; otherwise raises
-   TypeCheckError through compile_jmp. */
-void agda_check(Node *m, const char *filename) {
-    T t = {0};
-    t.filename = filename;
-    read_imports(&t, m->l[0], m->n[0]);
-    prepass(&t, m->l[0], m->n[0], false);
-    if (!t.future_ann)
-        terr(&t, 1, "a checked file must start with: from __future__ import annotations");
-    toplevel(&t, m->l[0], m->n[0]);
+/* ---------- holes ---------- */
 
-    /* The module is named after a hash of its text, so the name is also the cache key. */
-    const char *body = t.out.s ? t.out.s : "";
-    uint64_t h = fnv(fnv(1469598103934665603ULL, agda_prelude), body);
+/* The text of the next Emacs-style string after `key` in Agda's interaction output. */
+static const char *lisp_string_after(const char **at, const char *key) {
+    const char *p = strstr(*at, key);
+    if (!p) return NULL;
+    p = strchr(p + strlen(key), '"');
+    if (!p) return NULL;
+    SB b;
+    sb_init(&b);
+    for (p++; *p && *p != '"'; p++) {
+        if (*p == '\\' && p[1]) { p++; sb_putc(&b, *p == 'n' ? '\n' : *p); }
+        else sb_putc(&b, *p);
+    }
+    sb_putc(&b, 0);
+    const char *r = astr(b.s);
+    sb_free(&b);
+    *at = p;
+    return r;
+}
+
+/* Agda accepted everything except the holes. Asks it, in interaction mode, what
+   each hole needs and which names are in scope there, and reports that. */
+__attribute__((noreturn)) static void report_holes(T *t, const char *dir, const char *module, const char *batch) {
+    /* The batch report lists the holes by position, in the order Agda numbers them. */
+    int lines[64], n = 0;
+    size_t ml = strlen(module);
+    const char *p = strstr(batch, "Unsolved interaction metas");
+    while (p && n < 64 && (p = strstr(p, module))) {
+        if (memcmp(p + ml, ".agda:", 6) == 0) {
+            int l = atoi(p + ml + 6);
+            lines[n++] = l >= 1 && l <= t->out.nl ? t->out.lines[l - 1] : 0;
+        }
+        p += ml;
+    }
+    SB cmd;
+    sb_init(&cmd);
+    sb_printf(&cmd, "IOTCM \"%s.agda\" None Indirect (Cmd_load \"%s.agda\" [\"--no-libraries\"])\n", module, module);
+    for (int i = 0; i < n; i++)
+        sb_printf(&cmd, "IOTCM \"%s.agda\" None Indirect (Cmd_goal_type_context Simplified %d noRange \"\")\n", module, i);
+    sb_putc(&cmd, 0);
+    const char *cmd_path = af("%s/%s.cmd", dir, module);
+    write_file(cmd_path, cmd.s);
+    sb_free(&cmd);
+    char *out = NULL;
+    run_agda(dir, NULL, af("%s.cmd", module), &out);
+    remove(cmd_path);
+    SB b;
+    sb_init(&b);
+    sb_printf(&b, "this file has %d hole%s, so it was not run.", n, n == 1 ? "" : "s");
+    const char *at = out ? out : "";
+    for (int i = 0; i < n; i++) {
+        const char *g = lisp_string_after(&at, "\"*Goal type etc.*\"");
+        sb_printf(&b, "\nline %d: hole() needs a value of type\n", lines[i]);
+        if (!g) { sb_puts(&b, "  (Agda gave no answer for this hole)"); continue; }
+        /* "Goal: T\n-----\nname : type\n..." */
+        const char *rule = strstr(g, "\n\xE2\x80\x94");
+        const char *goal = strncmp(g, "Goal: ", 6) == 0 ? g + 6 : g;
+        size_t gl = rule ? (size_t)(rule - goal) : strlen(goal);
+        sb_puts(&b, "  ");
+        for (size_t j = 0; j < gl; j++) {
+            if (memcmp(goal + j, USCORE, 2) == 0) { sb_putc(&b, '_'); j++; }
+            else { sb_putc(&b, goal[j]); if (goal[j] == '\n') sb_puts(&b, "  "); }
+        }
+        const char *ctx = rule ? strchr(rule + 1, '\n') : NULL;
+        if (ctx && ctx[1]) {
+            sb_puts(&b, "\nwith these names to build it from:");
+            for (const char *q = ctx; *q; q++) {
+                if (memcmp(q, USCORE, 2) == 0) { sb_putc(&b, '_'); q++; }
+                else { sb_putc(&b, *q); if (*q == '\n') sb_puts(&b, "  "); }
+            }
+        }
+    }
+    sb_putc(&b, 0);
+    const char *r = astr(b.s);
+    sb_free(&b);
+    check_fail(t->filename, n ? lines[0] : 0, r);
+}
+
+/* ---------- checking a file, and the checked files it imports ---------- */
+
+extern const char *const pylib_names[];
+extern const char *const pylib_sources[];
+
+typedef struct { const char *path; T *t; bool busy; } Mod;
+static Mod mods[64];
+static int nmods;
+
+static T *check_module(Node *m, const char *filename, bool main);
+
+/* Finds, translates and checks the checked file `mod`, once per run. It is looked
+   for beside the importing file and then among the built-in modules, the same
+   places the interpreter looks when the program runs. */
+static T *load_checked(T *t, Str *mod, int line) {
+    for (uint32_t i = 0; i < mod->len; i++)
+        if (mod->s[i] == '.') terr(t, line, "a checked file imports other checked files by a plain name, with no dots");
+    const char *slash = strrchr(t->filename, '/');
+    const char *path = slash ? af("%.*s/%s.py", (int)(slash - t->filename), t->filename, mod->s) : af("%s.py", mod->s);
+    const char *src = read_file(path);
+    if (!src)
+        for (int i = 0; pylib_names[i]; i++)
+            if (str_eqc(mod, pylib_names[i])) { src = pylib_sources[i]; path = af("<builtin %s>", pylib_names[i]); }
+    if (!src) terr(t, line, "cannot find '%s.py' beside this file", mod->s);
+    for (int i = 0; i < nmods; i++)
+        if (strcmp(mods[i].path, path) == 0) {
+            if (mods[i].busy) terr(t, line, "'%s' and this file import each other, which is not available in checked files", mod->s);
+            return mods[i].t;
+        }
+    if (nmods == 64) terr(t, line, "too many checked files in one program");
+    int at = nmods++;
+    mods[at].path = path; mods[at].busy = true; mods[at].t = NULL;
+    Node *m = parse_source(src, path, MODE_FILE);
+    if (!agda_wanted(m))
+        terr(t, line, "'%s' is not a checked file: it does not import dependent. A checked file can import only checked "
+                      "files. To call other Python, write a def marked @trusted that makes the call.", mod->s);
+    mods[at].t = check_module(m, path, false);
+    mods[at].busy = false;
+    return mods[at].t;
+}
+
+/* from other import a, b as c */
+static void load_imports(T *t) {
+    t->imports = "";
+    for (int k = 0; k < t->nimport_stmts; k++) {
+        Node *s = t->import_stmts[k];
+        Str *mod = AS_STR(s->val);
+        if (s->op) terr(t, s->line, "'from %s import *' is not available in a checked file; name what is imported", mod->s);
+        T *sub = load_checked(t, mod, s->line);
+        if (sub->unsafe) t->unsafe = true;
+        const char *using = NULL;
+        for (int j = 0; j < s->n[0]; j++) {
+            Node *a = s->l[0][j];
+            Str *nm = AS_STR(a->val), *as = a->val2 ? AS_STR(a->val2) : nm;
+            Sym *src = find_sym(sub, nm);
+            if (src && src->external)
+                terr(t, s->line, "'%s' is not defined in '%s'; import it from the file that defines it", nm->s, mod->s);
+            if (!src || src->owner) terr(t, s->line, "'%s' has no top-level name '%s'", mod->s, nm->s);
+            if (find_sym(t, as)) terr(t, s->line, "'%s' is imported twice", as->s);
+            for (int i = 0; i < NPRELUDE; i++)
+                if (str_eqc(as, prelude_names[i].py) && imported(t, prelude_names[i].py))
+                    terr(t, s->line, "'%s' is already imported from dependent", as->s);
+            sym_tys(sub, src);
+            Sym *c = add_sym(t, as, src->kind, src->arity, src->node, 0);
+            Str *py = c->py;
+            *c = *src;
+            c->py = py; c->external = true; c->line = 0; c->rt_ref = false;
+            const char *names = c->agda;
+            if (c->kind == SK_RECORD) {
+                names = af("%s; module %s; %s", c->agda, c->agda, c->ctor);
+                if (c->has_eq) names = af("%s; Eq-%s", names, c->agda);
+                for (int i = 0; i < c->nmethods; i++) {
+                    sym_tys(sub, c->methods[i]);
+                    c->methods[i]->external = true;
+                    names = af("%s; %s", names, c->methods[i]->agda);
+                }
+            }
+            using = using ? af("%s; %s", using, names) : names;
+        }
+        t->imports = af("%sopen import %s using (%s)\n", t->imports, sub->module, using ? using : "");
+        t->nimport_lines++;
+    }
+}
+
+/* Translates a parsed module and has Agda check it. Returns when Agda accepts
+   it; otherwise raises TypeCheckError through compile_jmp. */
+static T *check_module(Node *m, const char *filename, bool main) {
+    T *t = arena_alloc(sizeof(T));
+    t->filename = filename;
+    read_imports(t, m->l[0], m->n[0]);
+    load_imports(t);
+    prepass(t, m->l[0], m->n[0], false);
+    if (!t->future_ann)
+        terr(t, 1, "a checked file must start with: from __future__ import annotations");
+    toplevel(t, m->l[0], m->n[0]);
+
+    /* The module is named after a hash of its text, so the name is also the cache key.
+       --safe rules out postulates, so it is left off when the file, or a file it
+       imports, has a @trusted def. */
+    const char *body = t->out.s ? t->out.s : "";
+    const char *options = t->unsafe ? "--erasure" : "--erasure --safe";
+    uint64_t h = fnv(fnv(fnv(fnv(1469598103934665603ULL, agda_prelude), options), t->imports), body);
     const char *module = af("C%016llx", (unsigned long long)h);
-    const char *header = af("{-# OPTIONS --erasure --safe #-}\nmodule %s where\nopen import PycPrelude\n", module);
+    t->module = module;
+    const char *header = af("{-# OPTIONS %s #-}\nmodule %s where\nopen import PycPrelude\n%s", options, module, t->imports);
     const char *text = af("%s%s", header, body);
-    /* Three header lines come before the first generated line. */
-    int *lines = arena_alloc((size_t)(t.out.nl + 3) * sizeof(int));
-    if (t.out.nl) memcpy(lines + 3, t.out.lines, (size_t)t.out.nl * sizeof(int));
-    lines[0] = lines[1] = lines[2] = 0;
-    t.out.lines = lines;
-    t.out.nl += 3;
+    /* The header lines come before the first generated line. */
+    int hl = 3 + t->nimport_lines;
+    int *lines = arena_alloc((size_t)(t->out.nl + hl) * sizeof(int));
+    if (t->out.nl) memcpy(lines + hl, t->out.lines, (size_t)t->out.nl * sizeof(int));
+    t->out.lines = lines;
+    t->out.nl += hl;
 
     if (agda_mode == 1) {
+        if (!main) return t;
         fputs(text, stdout);
         fflush(stdout);
         exit(0);
@@ -3479,33 +3677,44 @@ void agda_check(Node *m, const char *filename) {
     const char *ok_path = af("%s/%s.ok", dir, module);
     char *have = read_file(prelude_path);
     if ((!have || strcmp(have, agda_prelude) != 0) && !write_file(prelude_path, agda_prelude))
-        terr(&t, 0, "cannot write the type checker's files in %s", dir);
+        terr(t, 0, "cannot write the type checker's files in %s", dir);
     /* A file that passed before, with the same text and prelude, is not checked again. */
     char *old = read_file(path), *mark = read_file(ok_path);
-    if (old && mark && strcmp(old, text) == 0) return;
+    if (old && mark && strcmp(old, text) == 0) return t;
     remove(ok_path);
-    if (!write_file(path, text)) terr(&t, 0, "cannot write the type checker's files in %s", dir);
+    if (!write_file(path, text)) terr(t, 0, "cannot write the type checker's files in %s", dir);
 
     char *output = NULL;
-    int status = run_agda(dir, af("%s.agda", module), &output);
+    int status = run_agda(dir, af("%s.agda", module), NULL, &output);
     if (status < 0) remove(path);
     if (status < 0)
-        terr(&t, 0, "this file imports dependent, which asks for type checking, and the agda program could not be "
-                    "started. Install Agda, or set PYC_AGDA to its path. The file was not run.");
-    if (status == 0) {
+        terr(t, 0, "this file imports dependent, which asks for type checking, and the agda program could not be "
+                   "started. Install Agda, or set PYC_AGDA to its path. The file was not run.");
+    if (status == 0 && !t->nholes) {
+        /* The .agdai file stays: a file that imports this one is checked against it. */
         write_file(ok_path, "ok\n");
-        remove(af("%s/%s.agdai", dir, module));
-        return;
+        return t;
     }
+    /* With holes and nothing else wrong, Agda reports the holes and nothing more. */
+    const char *e1 = strstr(output, "error: ["), *e2 = e1 ? strstr(e1 + 1, "error: [") : NULL;
+    bool only_holes = t->nholes && (!e1 || (!e2 && strncmp(e1, "error: [UnsolvedInteractionMetas]", 33) == 0));
+    if (only_holes) report_holes(t, dir, module, output);
     int first = 0;
-    const char *report = map_report(&t, output, module, &first);
+    const char *report = map_report(t, output, module, &first);
     remove(path);
     if (!*report) report = af("agda failed with exit status %d and no message", status);
-    for (int i = 0; i < t.nauto; i++)
-        if (t.auto_lines[i] == first && strstr(report, "when checking that the expression refl has type")) {
+    for (int i = 0; i < t->nauto; i++)
+        if (t->auto_lines[i] == first && strstr(report, "when checking that the expression refl has type")) {
             report = af("%s\nxs[i] needs i < len(xs), d[k] needs k in d, and // and %% need a divisor that is not 0. "
                         "The checker cannot see that the one on this line holds. Put the code under an 'if' that tests it.", report);
             break;
         }
     check_fail(filename, first, report);
+}
+
+void agda_check(Node *m, const char *filename) {
+    /* The file itself is in the table, so a file that imports it back is noticed. */
+    nmods = 1;
+    mods[0].path = filename; mods[0].busy = true; mods[0].t = NULL;
+    check_module(m, filename, true);
 }

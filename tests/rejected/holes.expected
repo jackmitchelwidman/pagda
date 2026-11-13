@@ -1,0 +1,15 @@
+  File "tests/rejected/holes.py", line 8
+    return cong(suc, hole())
+TypeCheckError: this file has 2 holes, so it was not run.
+line 8: hole() needs a value of type
+  n₁ + 0 ≡ n₁
+with these names to build it from:
+  n₁ : Nat
+line 15: hole() needs a value of type
+  Nat
+with these names to build it from:
+  h    : flag ≡ true
+  best : Nat
+  x    : Int
+  flag : Bool
+  xs   : List Int

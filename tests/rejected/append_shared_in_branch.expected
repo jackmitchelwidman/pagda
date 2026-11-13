@@ -1,0 +1,3 @@
+  File "tests/rejected/append_shared_in_branch.py", line 11
+    xs.append(2)
+TypeCheckError: 'xs' may be shared here: it is a parameter, or it came from a call, or it was given another name, passed on or put inside another value. A shared list or dict cannot be changed in place, because the other holder would see the change. Make a copy first: xs = list(xs)

@@ -1,0 +1,4 @@
+  File "tests/rejected/import_wrong_use.py", line 7
+    return twice(s)
+TypeCheckError: String !=< Nat
+when checking that the expression s has type Nat

@@ -1,0 +1,3 @@
+  File "tests/rejected/import_missing_name.py", line 3
+    from helper_checked import nothing_here
+TypeCheckError: 'helper_checked' has no top-level name 'nothing_here'

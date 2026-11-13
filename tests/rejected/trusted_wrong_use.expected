@@ -1,0 +1,4 @@
+  File "tests/rejected/trusted_wrong_use.py", line 12
+    return read_size(n)
+TypeCheckError: Nat !=< String
+when checking that the expression n has type String

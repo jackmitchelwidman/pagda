@@ -1,0 +1,4 @@
+  File "tests/rejected/hole_and_error.py", line 10
+    return n
+TypeCheckError: Nat !=< String
+when checking that the expression n has type String
