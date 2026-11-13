@@ -654,3 +654,18 @@ ltLower zero m (suc n) p q = refl
 ltLower (suc k) zero n () q
 ltLower (suc k) (suc m) zero p ()
 ltLower (suc k) (suc m) (suc n) p q = ltLower k m n p q
+
+-- `a and b` where b may rely on a having been true, and `a or b` where b may rely
+-- on a having been false, as when Python skips b.
+andThen : (a : Bool) → (a ≡ true → Bool) → Bool
+andThen true f = f refl
+andThen false f = false
+orElse : (a : Bool) → (a ≡ false → Bool) → Bool
+orElse true f = true
+orElse false f = f refl
+andThenL : {a : Bool} {f : a ≡ true → Bool} → andThen a f ≡ true → a ≡ true
+andThenL {true} p = refl
+andThenR : {a : Bool} {f : a ≡ true → Bool} (p : andThen a f ≡ true) → f (andThenL {a} {f} p) ≡ true
+andThenR {true} p = p
+unNotFalse : {c : Bool} → not c ≡ false → c ≡ true
+unNotFalse {true} p = refl

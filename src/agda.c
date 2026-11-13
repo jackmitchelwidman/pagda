@@ -237,7 +237,7 @@ static const char *const reserved[] = {
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
     "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
     "findKey", "dfind", "chars", "unchars", "strIndex", "strSlice", "strTake", "strDrop", "strChars", "isPrefix", "startsWith", "endsWith",
-    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "ltAsym", "ltLower", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
+    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "andThen", "orElse", "andThenL", "andThenR", "unNotFalse", "ltAsym", "ltLower", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
     "popped", "insertAt", "rangeInt", "Char", "ltNotZero", "posNotZero", "negNotZero", "sucs", "ltSucs", "monusUp", "intDown", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
     "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
@@ -1230,6 +1230,76 @@ static const char *cmp_text(T *t, int op, Node *x, Node *y, bool core, bool *pol
 }
 
 static const char *C(T *t, Node *c);
+static int new_fact_id(T *t);
+
+/* One part of a condition and the proof that goes with it. */
+typedef struct CF CF;
+struct CF { const char *core; bool pol; const char *proof; CF *next; };
+
+static void cf_push(CF **list, const char *core, bool pol, const char *proof) {
+    CF *f = arena_alloc(sizeof(CF)), **at = list;
+    f->core = core; f->pol = pol; f->proof = proof;
+    while (*at) at = &(*at)->next;
+    *at = f;
+}
+
+static const char *cond_core(T *t, Node *c, bool *pol);
+
+/* One operand of `and` / `or`. In a condition any value will do, and a list counts
+   as true when it is not empty. As a value, `xs or ys` is one of the two lists in
+   Python, so there the operands have to be bools already. */
+static const char *bool_operand(T *t, Node *c, bool strict, bool *pol) {
+    if (!strict || c->kind == E_COMPARE || c->kind == E_NOT || c->kind == E_BOOLOP) return cond_core(t, c, pol);
+    *pol = true;
+    return E(t, c);
+}
+
+/* `l[j] and ... and l[n-1]` (or with `or`). Python works out a later part only
+   when the earlier ones let it, so a later part may rely on them: in
+   `i < len(xs) and xs[i] > 0` the second part has its bounds proof from the
+   first. Where a later part uses such a proof, the join is written with andThen
+   (or orElse), which hands the proof on; otherwise with a plain ∧ (or ∨).
+
+   With `h` and `facts`, for an `and` chain: `h` is a proof that the whole chain
+   is true, and *facts gets a proof of each part, worked out from h. */
+static const char *bool_chain(T *t, Node **l, int n, int j, bool is_or, bool strict, const char *h, CF **facts) {
+    bool pol;
+    const char *core = bool_operand(t, l[j], strict, &pol);
+    const char *cj = pol ? core : af("(not %s)", core);
+    if (j == n - 1) {
+        if (facts) cf_push(facts, core, pol, pol ? h : af("(unNot %s)", h));
+        return cj;
+    }
+    const char *hj = fresh(t, "h"), *r = fresh(t, "r");
+    int fid = new_fact_id(t);
+    Var *saved = t->c.env;
+    /* what the later parts may rely on: this part was true (and) or false (or) */
+    if (!is_or) add_fact(t, core, pol, pol ? hj : af("(unNot %s)", hj));
+    else add_fact(t, core, !pol, pol ? hj : af("(unNotFalse %s)", hj));
+    t->c.env->fid = fid;
+    CF *rf = NULL;
+    const char *rest = bool_chain(t, l, n, j + 1, is_or, strict, r, facts ? &rf : NULL);
+    t->c.env = saved;
+    bool used = t->fact_used[fid];
+    if (is_or) return used ? af("(orElse %s (\xCE\xBB %s \xE2\x86\x92 %s))", cj, hj, rest) : af("(%s \xE2\x88\xA8 %s)", cj, rest);
+    if (!used) {
+        if (facts) {
+            const char *p = af("(andLeft %s)", h);
+            cf_push(facts, core, pol, pol ? p : af("(unNot %s)", p));
+            for (CF *f = rf; f; f = f->next) cf_push(facts, f->core, f->pol, subst_ident(f->proof, r, af("(andRight %s)", h)));
+        }
+        return af("(%s \xE2\x88\xA7 %s)", cj, rest);
+    }
+    if (facts) {
+        const char *fn = af("(\xCE\xBB %s \xE2\x86\x92 %s)", hj, rest);
+        const char *pj = af("(andThenL {%s} {%s} %s)", cj, fn, h);
+        const char *pr = af("(andThenR {%s} {%s} %s)", cj, fn, h);
+        cf_push(facts, core, pol, pol ? pj : af("(unNot %s)", pj));
+        for (CF *f = rf; f; f = f->next)
+            cf_push(facts, subst_ident(f->core, hj, pj), f->pol, subst_ident(subst_ident(f->proof, hj, pj), r, pr));
+    }
+    return af("(andThen %s (\xCE\xBB %s \xE2\x86\x92 %s))", cj, hj, rest);
+}
 
 /* A condition as a plain test and whether the condition is that test or its
    opposite. A list, dict, str or number used as a condition is true when it is
@@ -1242,11 +1312,7 @@ static const char *cond_core(T *t, Node *c, bool *pol) {
         return r;
     }
     if (c->kind == E_COMPARE && c->n[0] == 1) return cmp_text(t, c->ops[0], c->a, c->l[0][0], true, pol);
-    if (c->kind == E_BOOLOP) {
-        const char *all = C(t, c->l[0][0]);
-        for (int i = 1; i < c->n[0]; i++) all = af("(%s %s %s)", all, c->op ? "\xE2\x88\xA8" : "\xE2\x88\xA7", C(t, c->l[0][i]));
-        return all;
-    }
+    if (c->kind == E_BOOLOP) return bool_chain(t, c->l[0], c->n[0], 0, c->op != 0, false, NULL, NULL);
     if (c->kind == E_COMPARE || c->kind == E_CONST) return E(t, c);
     switch (tk(ty_of(t, c))) {
     case TK_LIST: return af("(0 < (len %s))", ER(t, c, NULL));
@@ -1878,22 +1944,21 @@ static const char *EW(T *t, Node *n, Ty *want) {
     }
     case E_NOT: return af("(not %s)", C(t, n->a));
     case E_FSTRING: return fstring_expr(t, n);
-    case E_BOOLOP: {
-        const char *all = E(t, n->l[0][0]);
-        for (int i = 1; i < n->n[0]; i++) all = af("(%s %s %s)", all, n->op ? "\xE2\x88\xA8" : "\xE2\x88\xA7", E(t, n->l[0][i]));
-        return all;
-    }
+    case E_BOOLOP: return bool_chain(t, n->l[0], n->n[0], 0, n->op != 0, true, NULL, NULL);
     case E_IFEXP: {
         if (!want) { Ty *own = ty_of(t, n); if (ty_has_int(own)) want = own; }
         /* Python works out only the branch it takes, so each branch may rely on the
            test: xs[0] if xs else 0. The proof is handed in only when a branch uses it. */
-        bool pol;
-        const char *core = cond_core(t, n->a, &pol);
-        const char *h = fresh(t, "h");
+        bool pol = true;
+        const char *h = fresh(t, "h"), *core;
+        CF *parts = NULL;
+        if (n->a->kind == E_BOOLOP && n->a->op == 0) core = bool_chain(t, n->a->l[0], n->a->n[0], 0, false, false, h, &parts);
+        else core = cond_core(t, n->a, &pol);
         int fid = new_fact_id(t);
         Var *saved = t->c.env;
         add_fact(t, core, pol, h);
         t->c.env->fid = fid;
+        for (CF *f = parts; f; f = f->next) { add_fact(t, f->core, f->pol, f->proof); t->c.env->fid = fid; }
         const char *a = EW(t, n->b, want);
         t->c.env = saved;
         add_fact(t, core, !pol, h);
@@ -3761,24 +3826,20 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
         if (L->tracked[i]) { nv->lenp = proofs[i]; nv->lenn = lenn[i]; }
     }
     if (is_while) {
-        bool pol;
-        const char *core = cond_core(t, s->a, &pol);
+        bool pol = true;
+        const char *h = fresh(t, "h"), *hc = h, *core;
+        CF *parts = NULL;
+        /* `while a and b:` gives the body a proof of each part */
+        if (s->a->kind == E_BOOLOP && s->a->op == 0) core = bool_chain(t, s->a->l[0], s->a->n[0], 0, false, false, h, &parts);
+        else core = cond_core(t, s->a, &pol);
         if (dec && tk(ty_of(t, dec->a->l[0][0])) == TK_INT)
             terr(t, dec->line, "the measure of a while loop is a Nat; turn an int into a Nat with to_nat(...)");
-        const char *h = fresh(t, "h"), *hc = h;
-        /* `while a and b:` gives the body a proof of each part */
-        if (s->a->kind == E_BOOLOP && s->a->op == 0) {
-            int m = s->a->n[0];
-            for (int j = 0; j < m; j++) {
-                const char *pj = h;
-                for (int q = 0; q < m - 1 - j; q++) pj = af("(andLeft %s)", pj);
-                if (j > 0) pj = af("(andRight %s)", pj);
-                bool pj_pol;
-                const char *cj = cond_core(t, s->a->l[0][j], &pj_pol);
-                add_fact(t, cj, pj_pol, pj_pol ? pj : af("(unNot %s)", pj));
-                if (!dec && j == auto_conj) hc = pj;
-            }
+        int pj = 0;
+        for (CF *f = parts; f; f = f->next, pj++) {
+            add_fact(t, f->core, f->pol, f->proof);
+            if (!dec && pj == auto_conj) hc = f->pol ? f->proof : NULL;
         }
+        if (!hc) terr(t, s->line, "the counting test of this while loop has to be written as 'i < n' or 'k > 0'");
         const char *measure;
         if (dec) measure = E(t, dec->a->l[0][0]);
         else if (auto_kind == 1) {

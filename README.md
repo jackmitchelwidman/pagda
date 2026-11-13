@@ -183,14 +183,15 @@ def price_of(items: list[Item], name: str) -> int:
 
 - **`list[A]`:** `[1, 2]`, `xs + ys`, `len(xs)`, `x in xs`, `xs[i]`, `xs[-1]`, `xs[a:b]` (ends may be negative), comprehensions, `sum`, `any`, `all`, `sorted` (of `Nat` or `int`), `list(...)`, and `match xs:` with `case []:` and `case [first, *rest]:`.
 - **`tuple[A, B]`:** `(a, b)`, `a, b = t`, `a, b = b, a`, `t[0]`, and `case (a, b):`. Two or more parts.
-- **`dict[K, V]`:** `{k: v}`, `d[k]`, `k in d`, `d.get(k)`, `d.get(k, default)`, `len(d)`, and looping over `d`, `d.items()`, `d.keys()` or `d.values()`. Keys keep the order they were first added.
+- **`dict[K, V]`:** `{k: v}`, `d[k]`, `k in d`, `d.get(k)`, `d.get(k, default)`, `len(d)`, and looping over `d`, `d.items()`, `d.keys()` or `d.values()`. Keys keep the order they were first added. A key is a `Nat`, `int`, `bool`, `str`, or a tuple of those: the kinds Python can use as keys. `d.get(k)` needs values that are never `None`, since it answers `None` for a missing key.
 - **`range`, `enumerate`, `zip`, `reversed` and the dict views** can stand after `in` of a loop or a comprehension, and inside `list(...)`. On their own they are not lists, and Python would not call them equal to one, so they are refused as plain values. For the same reason two dicts cannot be compared with `==`.
 
 ### Operations that can fail
 
 `xs[i]` fails when `i` is past the end, `xs[-1]` and `xs.pop()` when the list is empty, `d[k]` when the key is missing, `//` and `%` when the divisor is 0, and `a - b` on Nats has no answer when `b` is larger. Agda has no failing, so each of these needs a reason it is fine. The checker finds the reason by itself when:
 
-- the code is under a test of the condition: `if i < len(xs):`, `if xs:`, `if k in d:`, `if b != 0:`, `if b <= a:`. The test can be an `if`, a `while`, one part of an `and`, or the test of `x if c else y`;
+- the code is under a test of the condition: `if i < len(xs):`, `if xs:`, `if k in d:`, `if b != 0:`, `if b <= a:`. The test can be an `if`, a `while`, or the test of `x if c else y`;
+- an earlier part of the same `and` tests it, as in `while i < len(xs) and xs[i] != t:`, or an earlier part of an `or` rules the bad case out, as in `not xs or xs[0] < 10`;
 - the loop is `for i in range(len(xs)):` and the body reads or writes `xs[i]`;
 - a parameter states it: `def at(xs: list[int], i: Nat, ok: (i < len(xs)) == True) -> int:`. The caller passes `known(i < len(xs))` from inside its own test;
 - an `assert` states it, where Agda can work the assert out;
@@ -235,7 +236,8 @@ while k > 0:              # an int counted down to 0
 
 - Every parameter and the result must be annotated. Every path must return, unless the def returns `None`.
 - **Default values** are numbers, strings, `True`, `False` or `None`, written out. Arguments can be passed by name.
-- **A def inside a function** can use the names around it. It cannot call itself.
+- **A def inside a function** can use the names around it. It cannot call itself, and it cannot change a list or dict of the outer function in place.
+- **A lambda or inner def made inside a loop** cannot use a name that the loop sets. In Python such a function sees the name's value at the time it is called, which is usually the last one. Pass the value in as an argument.
 - **Function types:** `Fn[A, B, C]` means the same as `Callable[[A, B], C]`: the last item is the result. An argument can be given a name, and the types after it can then use it. `Fn[k: Nat, Vec[A, k]]` takes a number `k` and gives a `Vec` of that length. The named form is for annotations only.
 - **Inside a lambda** whose argument types the checker cannot see, numbers are taken to be `Nat`. Use a `def` for a function on ints that is passed to a generic function.
 
@@ -271,7 +273,7 @@ def file_size(path: str) -> Nat:
     return os.path.getsize(path)
 ```
 
-Two things are taken on trust: that the def returns a value of the type it says, and that the same arguments always give the same result. Agda treats it as a function, so `assert f(x) == f(x)` passes the check whatever `f` does.
+Three things are taken on trust: that the def returns a value of the type it says, that the same arguments always give the same result, and that it does not change the lists and dicts it is given. Agda treats it as a function, so `assert f(x) == f(x)` passes the check whatever `f` does.
 
 ### The top level
 
@@ -280,7 +282,7 @@ Two things are taken on trust: that the def returns a value of the type it says,
 ### What the check covers, and what it does not
 
 - **Covered:** if a checked file is accepted and run as the main program, every call inside it gets arguments of the annotated types, every `match` finds a case, every recursion and loop ends, no index, key, pop, division or subtraction fails, no `None` is used as a value, and every `assert` holds.
-- **`@trusted` defs:** the guarantee holds only as far as each one keeps its two promises.
+- **`@trusted` defs:** the guarantee holds only as far as each one keeps its three promises.
 - **Callers outside:** an ordinary Python file can import a checked file and call it with anything. Annotations are not checked while the program runs. An outside caller can also keep a list it passed in and change it later.
 - **Deep recursion:** Agda proves that a recursion ends. The interpreter still stops at 1000 nested calls with `RecursionError`. A checked file cannot import `sys`, so raise the limit from an ordinary file that imports the checked one.
 - **Large numbers in asserts:** Agda works an `assert` out itself, and it counts `Nat` values one step at a time in proofs. An assert over large numbers can be slow.
@@ -290,7 +292,7 @@ Two things are taken on trust: that the def returns a value of the type it says,
 
 - Floats, `bytes`, sets, and string methods beyond the ones listed (no `upper`, `lower`, `format`, `int("12")`).
 - Exceptions (`raise`, `try`), `with` blocks, and anything else that touches the outside world except `print`. Use a `@trusted` def.
-- Assigning to a field, inheritance between `@dataclass` classes, and field defaults.
+- Assigning to a field, inheritance between `@dataclass` classes, field defaults, and methods named `__x__` (Python calls those by itself).
 - Changing a list that sits inside another list (`grid[i][j] = v`), and changing a list or dict that might be shared.
 - `list.remove`, `dict.pop`, `del`, slices with a step, tuples of one part, `range` with a step.
 - Loop state whose type changes from pass to pass, and `else` on a loop.
