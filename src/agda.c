@@ -165,6 +165,7 @@ typedef struct {
     Ty *ret_ty;                           /* what the function being written returns */
     Str **ints; int nints;                /* locals that hold an int somewhere in the function */
     Str **opt_names; Ty **opt_tys; int nopts;   /* locals that are None in one place and a value in another */
+    Str **up_names; Ty **up_tys; int nups;      /* locals handed to something that takes ints */
     const char **used; int nused, ucap;   /* Agda names taken in this definition */
     const char **lhs; int nlhs, lhscap;   /* the ones that are variables of the left-hand side */
     Str **locals; int nlocals, lcap;      /* names this function assigns somewhere */
@@ -1275,9 +1276,8 @@ static const char *known_proof(T *t, Node *c, int line) {
     bool pol;
     const char *core = cond_core(t, c, &pol);
     const char *p = fact_proof(t, core, pol);
-    if (!p)
-        terr(t, line, "nothing here shows that this condition holds. known(c) gives the proof inside 'if c:' or 'while c:', "
-                      "and known(not c) gives it in the else part, with c written the same way.");
+    /* with no test in scope, refl: enough when Agda can work the condition out */
+    if (!p) return auto_refl(t, line);
     return pol ? p : af("(notFalse %s)", p);
 }
 
@@ -1438,7 +1438,7 @@ static const char *def_args(T *t, Sym *s, Node *n, int skip, Ty *want) {
     ntmap = 0;
     if (want) match_ann(t, s->node->b, want, s->node, cls);
     for (int i = skip; i < np; i++)
-        pts[i] = s->p_tys[i] || !ntmap || !p->ann[i] ? s->p_tys[i] : ty_ann(t, p->ann[i], s->node, cls);
+        pts[i] = !ntmap || !p->ann[i] ? s->p_tys[i] : ty_ann(t, p->ann[i], s->node, cls);
     ntmap = 0;
     const char *text = "";
     for (int i = skip; i < np; i++) {
@@ -2203,7 +2203,7 @@ static const char *record_call(T *t, Sym *s, Node *n, Ty *want) {
     if (tk(want) == TK_REC && want->sym == s && want->n == s->arity)
         for (int i = 0; i < s->arity && i < 16; i++) { tmap[ntmap].name = AS_STR(s->node->l[3][i]->val); tmap[ntmap].ty = want->items[i]; ntmap++; }
     for (int i = 0; i < s->nfields; i++)
-        fts[i] = s->fields[i]->ty || !ntmap ? s->fields[i]->ty : ty_ann(t, s->fields[i]->node, NULL, s->node);
+        fts[i] = !ntmap ? s->fields[i]->ty : ty_ann(t, s->fields[i]->node, NULL, s->node);
     ntmap = 0;
     if (argc != s->nfields)
         terr(t, n->line, "%s() takes %d argument%s but %d %s given", s->py->s, s->nfields, s->nfields == 1 ? "" : "s", argc,
@@ -2586,15 +2586,67 @@ static void scan_note(Str *name, bool none, Ty *ty) {
     else if (ty && ty->k != TK_NONE && ty->k != TK_OPT && (!scan_opt[at].ty || ty->k == TK_INT)) scan_opt[at].ty = ty;
 }
 
+/* `xs = [4, 8]` makes a list of Nats, and passing xs to a def that takes a
+   list[int] then needs a list of ints. The walk notes each local name that is
+   handed to a parameter, field or result whose type holds ints. */
+static struct { Str *name; Ty *ty; } scan_up[64];
+static int nscan_up;
+
+static void scan_use(T *t, Node *arg, Ty *want) {
+    if (!arg || arg->kind != E_NAME || !ty_has_int(want) || nscan_up == 64) return;
+    Var *v = find_var(t, AS_STR(arg->val));
+    if (!v || ty_has_int(v->ty)) return;
+    for (int i = 0; i < nscan_up; i++) if (str_eq(scan_up[i].name, v->py)) return;
+    scan_up[nscan_up].name = v->py; scan_up[nscan_up].ty = want; nscan_up++;
+}
+
+static void scan_expr(T *t, Node *e) {
+    if (!e) return;
+    switch (e->kind) {
+    case E_CALL: {
+        scan_expr(t, e->a);
+        for (int i = 0; i < e->n[0]; i++) scan_expr(t, e->l[0][i]);
+        Sym *s = NULL;
+        int skip = 0;
+        if (e->a->kind == E_NAME && !find_var(t, AS_STR(e->a->val))) s = find_sym(t, AS_STR(e->a->val));
+        else if (e->a->kind == E_ATTR) {
+            Ty *r = ty_of(t, e->a->a);
+            if (tk(r) == TK_REC) { s = method_of(t, r->sym, AS_STR(e->a->val)); skip = 1; }
+        }
+        if (s && s->kind == SK_RECORD) {
+            for (int i = 0; i < e->n[0] && i < s->nfields; i++)
+                if (e->l[0][i]->kind != E_KEYWORD && s->fields[i]->node) scan_use(t, e->l[0][i], ty_ann(t, s->fields[i]->node, NULL, s->node));
+        } else if (s && (s->kind == SK_FUNC || s->kind == SK_CTOR) && s->node) {
+            sym_tys(t, s);
+            for (int i = 0; i < e->n[0] && skip + i < s->node->params->n; i++)
+                if (e->l[0][i]->kind != E_KEYWORD) scan_use(t, e->l[0][i], s->p_tys[skip + i]);
+        }
+        break;
+    }
+    case E_BINOP: case E_SUBSCR: scan_expr(t, e->a); scan_expr(t, e->b); break;
+    case E_IFEXP: scan_expr(t, e->a); scan_expr(t, e->b); scan_expr(t, e->c); break;
+    case E_UNARY: case E_NOT: case E_ATTR: case E_KEYWORD: case E_STARRED: case E_FORMATTED: scan_expr(t, e->a); break;
+    case E_COMPARE: scan_expr(t, e->a); /* fall through */
+    case E_BOOLOP: case E_TUPLE: case E_LIST: case E_FSTRING:
+        for (int i = 0; i < e->n[0]; i++) scan_expr(t, e->l[0][i]);
+        break;
+    case E_DICT: for (int i = 0; i < e->n[0]; i++) { scan_expr(t, e->l[0][i]); scan_expr(t, e->l[1][i]); } break;
+    default: break;
+    }
+}
+
 static void scan_ints(T *t, Names *ints, Node **l, int n) {
     for (int i = 0; i < n; i++) {
         Node *s = l[i];
         switch (s->kind) {
+        case S_EXPR: scan_expr(t, s->a); break;
+        case S_RETURN: if (s->a) { scan_expr(t, s->a); scan_use(t, s->a, t->c.ret_ty); } break;
         case S_ASSIGN: case S_ANNASSIGN: case S_AUGASSIGN: {
             Node *tg = s->kind == S_ASSIGN ? (s->n[0] == 1 ? s->l[0][0] : NULL) : s->a;
             if (!tg || tg->kind != E_NAME) break;
             Node *value = s->kind == S_ASSIGN ? s->a : s->b;
             if (!value) break;
+            scan_expr(t, value);
             if (s->kind == S_ASSIGN) scan_note(AS_STR(tg->val), is_none(value), is_none(value) ? NULL : ty_of(t, value));
             Ty *ty;
             if (s->kind == S_ANNASSIGN) ty = ty_ann(t, s->c, NULL, NULL);
@@ -2610,12 +2662,13 @@ static void scan_ints(T *t, Names *ints, Node **l, int n) {
             break;
         }
         case S_FOR:
+            scan_expr(t, s->b);
             scan_target(t, s->a, iter_elem(t, s->b));
             scan_ints(t, ints, s->l[0], s->n[0]);
             break;
-        case S_WHILE: scan_ints(t, ints, s->l[0], s->n[0]); break;
-        case S_IF: scan_ints(t, ints, s->l[0], s->n[0]); scan_ints(t, ints, s->l[1], s->n[1]); break;
-        case S_MATCH: for (int j = 0; j < s->n[0]; j++) scan_ints(t, ints, s->l[0][j]->l[0], s->l[0][j]->n[0]); break;
+        case S_WHILE: scan_expr(t, s->a); scan_ints(t, ints, s->l[0], s->n[0]); break;
+        case S_IF: scan_expr(t, s->a); scan_ints(t, ints, s->l[0], s->n[0]); scan_ints(t, ints, s->l[1], s->n[1]); break;
+        case S_MATCH: scan_expr(t, s->a); for (int j = 0; j < s->n[0]; j++) scan_ints(t, ints, s->l[0][j]->l[0], s->l[0][j]->n[0]); break;
         default: break;
         }
     }
@@ -2627,9 +2680,14 @@ static void scan_body(T *t, Node **l, int n) {
     Names ints = {0};
     Var *env = t->c.env;
     nscan_opt = 0;
+    nscan_up = 0;
     scan_ints(t, &ints, l, n);
     scan_ints(t, &ints, l, n);
     t->c.env = env;
+    t->c.up_names = arena_alloc((size_t)(nscan_up + 1) * sizeof(Str *));
+    t->c.up_tys = arena_alloc((size_t)(nscan_up + 1) * sizeof(Ty *));
+    t->c.nups = nscan_up;
+    for (int i = 0; i < nscan_up; i++) { t->c.up_names[i] = scan_up[i].name; t->c.up_tys[i] = scan_up[i].ty; }
     t->c.ints = ints.v; t->c.nints = ints.n;
     t->c.opt_names = arena_alloc((size_t)(nscan_opt + 1) * sizeof(Str *));
     t->c.opt_tys = arena_alloc((size_t)(nscan_opt + 1) * sizeof(Ty *));
@@ -2650,6 +2708,9 @@ static Ty *assign_ty(T *t, Asg *a, Ty **want) {
     if (!a->ann && a->name)
         for (int i = 0; i < t->c.nopts; i++)
             if (str_eq(t->c.opt_names[i], a->name) && tk(vt) != TK_OPT) { *want = t->c.opt_tys[i]; return *want; }
+    if (!a->ann && a->name && !ty_has_int(vt))
+        for (int i = 0; i < t->c.nups; i++)
+            if (str_eq(t->c.up_names[i], a->name) && (!vt || vt->k == t->c.up_tys[i]->k)) { *want = t->c.up_tys[i]; return *want; }
     if (!a->ann && a->name && tk(vt) == TK_NAT)
         for (int i = 0; i < t->c.nints; i++)
             if (str_eq(t->c.ints[i], a->name)) { *want = &ty_int; return &ty_int; }
@@ -2886,10 +2947,22 @@ static const char *pattern(T *t, Node *p, Ty *ty) {
         const char *text = s->kind == SK_RECORD ? s->ctor : s->agda;
         if (!arity) return text;
         sym_tys(t, s);
-        for (int i = 0; i < p->n[0]; i++) {
-            Ty *ft = s->kind == SK_RECORD ? s->fields[i]->ty : s->p_tys ? s->p_tys[i] : NULL;
-            text = af("%s %s", text, pattern(t, p->l[0][i], ft));
+        /* Cons(x, rest) matched against a Vec[int, n]: x is an int. The type of the
+           value matched says what the constructor's square-bracket names stand for. */
+        Ty **fts = arena_alloc((size_t)(arity + 1) * sizeof(Ty *));
+        ntmap = 0;
+        if (s->kind == SK_RECORD) {
+            if (tk(ty) == TK_REC && ty->sym == s && ty->n == s->arity)
+                for (int i = 0; i < s->arity && i < 16; i++) { tmap[ntmap].name = AS_STR(s->node->l[3][i]->val); tmap[ntmap].ty = ty->items[i]; ntmap++; }
+            for (int i = 0; i < arity; i++)
+                fts[i] = !ntmap ? s->fields[i]->ty : ty_ann(t, s->fields[i]->node, NULL, s->node);
+        } else {
+            if (ty && !s->prelude) match_ann(t, s->node->b, ty, s->node, NULL);
+            for (int i = 0; i < arity; i++)
+                fts[i] = !s->p_tys ? NULL : !ntmap ? s->p_tys[i] : ty_ann(t, s->node->params->ann[i], s->node, NULL);
         }
+        ntmap = 0;
+        for (int i = 0; i < p->n[0]; i++) text = af("%s %s", text, pattern(t, p->l[0][i], fts[i]));
         return af("(%s)", text);
     }
     case P_SEQ: {
@@ -3169,6 +3242,7 @@ static int expand_assign(T *t, Node *s, Node ***out) {
 }
 
 static void scan_body(T *t, Node **l, int n);
+static void fact_from_ann(T *t, Node *ann, const char *term);
 
 /* A def inside a function: a function value held in a local name. It can use the
    names around it, and it cannot call itself. Returns the Agda text; *ty is its type. */
@@ -3365,6 +3439,7 @@ static void sx(T *t, K *k, Tail *tl, int line) {
                 const char *x = fresh(t, a.name->s);
                 o_put(t->cur, s->line, ty ? af("  let %s : %s ; %s = %s in\n", x, ty, x, e) : af("  let %s = %s in\n", x, e));
                 bindv(t, a.name, x, false, vt, s->line)->fresh0 = fr;
+                fact_from_ann(t, a.ann, x);
             }
             k = rest;
             continue;
@@ -4031,6 +4106,22 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
     }
 }
 
+/* A name whose annotation is `c == True` or `c == False` holds a proof about the
+   condition c. It is recorded as a fact, so that xs[i], a // b and the like find
+   it: def get(xs: list[int], i: Nat, ok: (i < len(xs)) == True) -> int: return xs[i] */
+static void fact_from_ann(T *t, Node *ann, const char *term) {
+    if (!ann || ann->kind != E_COMPARE || ann->n[0] != 1 || ann->ops[0] != CMP_EQ) return;
+    Node *rhs = ann->l[0][0];
+    if (rhs->kind != E_CONST || (rhs->val != Py_True && rhs->val != Py_False)) return;
+    bool pol, wanted = rhs->val == Py_True;
+    bool in_type = t->c.in_type;
+    t->c.in_type = true;
+    const char *core = cond_core(t, ann->a, &pol);
+    t->c.in_type = in_type;
+    if (pol) add_fact(t, core, wanted, term);
+    else if (wanted) add_fact(t, core, false, af("(unNot %s)", term));
+}
+
 /* The square-bracket names in scope in a def: those of its class, then its own. */
 static int tparams_of(Sym *s, Node ***out) {
     Node *def = s->node, *cls = s->owner ? s->owner->node : NULL;
@@ -4066,6 +4157,7 @@ static void emit_func_body(T *t, Sym *s) {
         bindv(t, def->params->names[i], s->p_names[i], true, pt, def->line);
         lhs = af("%s %s", lhs, s->p_names[i]);
     }
+    for (int i = 0; i < np; i++) fact_from_ann(t, def->params->ann[i], s->p_names[i]);
     t->c.ret_ty = ty_ann(t, def->b, NULL, NULL);
     collect_locals(t, def->l[0], def->n[0]);
     scan_body(t, def->l[0], def->n[0]);
@@ -4785,7 +4877,8 @@ static T *check_module(Node *m, const char *filename, bool main) {
         if (t->auto_lines[i] == first && strstr(report, "when checking that the expression refl has type")) {
             report = af("%s\nThe checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), "
                         "d[k] needs k in d, // and %% need a divisor that is not 0, a - b on Nats needs b <= a, and an "
-                        "assert inside a function needs its condition. Put the code under an 'if' that tests it.", report);
+                        "assert inside a function needs its condition. known(c) gives the proof inside 'if c:' or "
+                        "'while c:', with c written the same way. Put the code under an 'if' that tests it.", report);
             break;
         }
     check_fail(filename, first, report);
