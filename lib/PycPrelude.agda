@@ -464,3 +464,134 @@ posNotZero : {b : Int} → (pos 0 <ᵢ b) ≡ true → (b == pos 0) ≡ false
 posNotZero {pos (suc n)} p = refl
 negNotZero : {b : Int} → (b <ᵢ pos 0) ≡ true → (b == pos 0) ≡ false
 negNotZero {negsuc n} p = refl
+
+-- ---------------------------------------------------------------------------
+-- Measures the checker supplies by itself for the two commonest while loops.
+sucs : Nat → Nat → Nat
+sucs zero i = i
+sucs (suc k) i = suc (sucs k i)
+lt-weaken : (a b : Nat) → (a < b) ≡ true → (a < suc b) ≡ true
+lt-weaken zero b p = refl
+lt-weaken (suc a) zero ()
+lt-weaken (suc a) (suc b) p = lt-weaken a b p
+ltSucs : (k i : Nat) → (i < suc (sucs k i)) ≡ true
+ltSucs zero i = lt-suc i
+ltSucs (suc k) i = lt-weaken i (suc (sucs k i)) (ltSucs k i)
+monus-below : (a b : Nat) → (monus a b < suc a) ≡ true
+monus-below zero zero = refl
+monus-below zero (suc b) = refl
+monus-below (suc a) zero = lt-suc a
+monus-below (suc a) (suc b) = lt-weaken (monus a b) (suc a) (monus-below a b)
+-- while i < n: ... i += c    the distance monus n i shrinks
+monusUp : (n i j : Nat) → (i < n) ≡ true → (i < j) ≡ true → (monus n j < monus n i) ≡ true
+monusUp zero i j () q
+monusUp (suc n) i zero p ()
+monusUp (suc n) zero (suc j) p q = monus-below n j
+monusUp (suc n) (suc i) (suc j) p q = monusUp n i j p q
+-- while k > 0: ... k -= c    for an int k, toNat k shrinks
+natSub-below : (m c : Nat) → (toNat (natSub m c) < suc m) ≡ true
+natSub-below m zero = lt-suc m
+natSub-below zero (suc c) = refl
+natSub-below (suc m) (suc c) = lt-weaken (toNat (natSub m c)) (suc m) (natSub-below m c)
+intDown : (k : Int) (c : Nat) → (pos 0 <ᵢ k) ≡ true → (toNat (k -ᵢ pos (suc c)) < toNat k) ≡ true
+intDown (pos zero) c ()
+intDown (pos (suc m)) c p = natSub-below m c
+intDown (negsuc m) c ()
+
+-- ---------------------------------------------------------------------------
+-- More of str. A string is taken apart into its characters and put back.
+open import Agda.Builtin.Char using (Char)
+import Agda.Builtin.Char as Ch
+chars : String → List Char
+chars = S.primStringToList
+unchars : List Char → String
+unchars = S.primStringFromList
+-- s[i] is a string of one character
+strIndex : (s : String) (i : Nat) → (i < strLen s) ≡ true → String
+strIndex s i p = unchars (index (chars s) i p ∷ [])
+strSlice : Nat → Nat → String → String
+strSlice a b s = unchars (slice a b (chars s))
+strTake : Nat → String → String
+strTake n s = unchars (take n (chars s))
+strDrop : Nat → String → String
+strDrop n s = unchars (drop n (chars s))
+-- for ch in s
+strChars : String → List String
+strChars s = mapL (λ c → unchars (c ∷ [])) (chars s)
+isPrefix : List Char → List Char → Bool
+isPrefix [] ys = true
+isPrefix (x ∷ xs) [] = false
+isPrefix (x ∷ xs) (y ∷ ys) = Ch.primCharEquality x y ∧ isPrefix xs ys
+startsWith : String → String → Bool
+startsWith s p = isPrefix (chars p) (chars s)
+endsWith : String → String → Bool
+endsWith s p = isPrefix (reverse (chars p)) (reverse (chars s))
+isInfix : List Char → List Char → Bool
+isInfix xs [] = isPrefix xs []
+isInfix xs (y ∷ ys) = isPrefix xs (y ∷ ys) ∨ isInfix xs ys
+-- a in b
+strIn : String → String → Bool
+strIn a b = isInfix (chars a) (chars b)
+ltChars : List Char → List Char → Bool
+ltChars [] [] = false
+ltChars [] (y ∷ ys) = true
+ltChars (x ∷ xs) [] = false
+ltChars (x ∷ xs) (y ∷ ys) with Ch.primCharToNat x < Ch.primCharToNat y
+... | true = true
+... | false = Ch.primCharEquality x y ∧ ltChars xs ys
+strLt : String → String → Bool
+strLt a b = ltChars (chars a) (chars b)
+strRepeat : String → Nat → String
+strRepeat s zero = ""
+strRepeat s (suc n) = concat s (strRepeat s n)
+strJoin : String → List String → String
+strJoin sep [] = ""
+strJoin sep (x ∷ []) = x
+strJoin sep (x ∷ y ∷ r) = concat x (concat sep (strJoin sep (y ∷ r)))
+-- s.split(sep) for a sep that is not empty. Each step uses up a character, so
+-- one step per character and one more is enough.
+splitGo : Nat → List Char → List Char → List Char → List String
+splitGo zero sep cur rest = unchars (reverse cur) ∷ []
+splitGo (suc f) sep cur [] = unchars (reverse cur) ∷ []
+splitGo (suc f) sep cur (c ∷ r) with isPrefix sep (c ∷ r)
+... | true = unchars (reverse cur) ∷ splitGo f sep [] (drop (len sep) (c ∷ r))
+... | false = splitGo f sep (c ∷ cur) r
+strSplit : String → String → List String
+strSplit s sep = splitGo (suc (strLen s)) (chars sep) [] (chars s)
+strReplace : String → String → String → String
+strReplace s old new = strJoin new (strSplit s old)
+
+-- ---------------------------------------------------------------------------
+-- xs[-1], xs.pop(), xs.insert(i, v), and range over ints
+lastOk : {n : Nat} → (0 < n) ≡ true → (monus n 1 < n) ≡ true
+lastOk {suc n} p = lt-suc n
+lastOf : ∀ {a} {@0 A : Set a} (xs : List A) → (0 < len xs) ≡ true → A
+lastOf xs p = index xs (monus (len xs) 1) (lastOk {len xs} p)
+popped : ∀ {a} {@0 A : Set a} (xs : List A) → (0 < len xs) ≡ true → List A
+popped xs p = take (monus (len xs) 1) xs
+insertAt : ∀ {a} {@0 A : Set a} → List A → Nat → A → List A
+insertAt xs zero v = v ∷ xs
+insertAt [] (suc i) v = v ∷ []
+insertAt (x ∷ xs) (suc i) v = x ∷ insertAt xs i v
+rangeInt : Int → Int → List Int
+rangeInt a b = mapL (λ k → a +ᵢ pos k) (range₁ (toNat (b -ᵢ a)))
+ltDown : (i n : Nat) → (suc i < n) ≡ true → (i < n) ≡ true
+ltDown i zero ()
+ltDown zero (suc n) p = refl
+ltDown (suc i) (suc n) p = ltDown i n p
+
+-- ---------------------------------------------------------------------------
+-- xs[i] = v keeps the length of xs, so a bound that held before still holds.
+setAtLen : ∀ {a} {@0 A : Set a} (xs : List A) (i : Nat) (v : A) (p : (i < len xs) ≡ true) {n : Nat}
+           → len xs ≡ n → len (setAt xs i v p) ≡ n
+setAtLen [] i v ()
+setAtLen (x ∷ xs) zero v p e = e
+setAtLen (x ∷ xs) (suc i) v p {zero} ()
+setAtLen (x ∷ xs) (suc i) v p {suc n} e = cong (fun₁ suc) (setAtLen xs i v p (suc-inj e)) where
+  suc-inj : {a b : Nat} → suc a ≡ suc b → a ≡ b
+  suc-inj refl = refl
+lenLt : (a n m : Nat) → m ≡ n → (a < n) ≡ true → (a < m) ≡ true
+lenLt a n m refl p = p
+setAtKeeps : ∀ {a} {@0 A : Set a} (xs : List A) (i : Nat) (v : A) (p : (i < len xs) ≡ true) (k : Nat)
+             → (k < len xs) ≡ true → (k < len (setAt xs i v p)) ≡ true
+setAtKeeps xs i v p k q = lenLt k (len xs) (len (setAt xs i v p)) (setAtLen xs i v p refl) q

@@ -5,5 +5,5 @@ from dependent import *
 def f(n: Nat) -> Nat:
     i = 0
     while i < n:
-        i = i + 1
+        i = i * 2 + 1
     return i
