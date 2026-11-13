@@ -1,0 +1,5 @@
+  File "tests/rejected/if_wrong_branch.py", line 24
+    return Left(refl())
+TypeCheckError: b != a of type Nat
+when checking that the expression refl has type
+(larger a b | true) ≡ a

@@ -1,0 +1,4 @@
+  File "tests/rejected/decide_wrong_proof.py", line 14
+    return gap(a, b, p)
+TypeCheckError: false != true of type Bool
+when checking that the expression p has type (a < b) ≡ true

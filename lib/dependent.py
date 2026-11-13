@@ -17,7 +17,8 @@ most things here are small. It runs the same under python3 and pyc.
 """
 
 __all__ = ["Type", "Nat", "Data", "constructor", "Callable", "Eq", "Refl", "refl", "suc", "pred", "monus",
-           "concat", "sym", "trans", "cong", "subst", "Empty", "absurd", "unreachable"]
+           "concat", "sym", "trans", "cong", "subst", "Empty", "absurd", "unreachable", "Fn", "Dec", "Yes", "No",
+           "decide"]
 
 Type = type
 Nat = int
@@ -25,6 +26,16 @@ Nat = int
 
 class Callable:
     """Callable[[A, B], C] is the type of functions from A and B to C."""
+
+    def __class_getitem__(cls, item):
+        return cls
+
+
+class Fn:
+    """Fn[A, B, C] is the type of functions from A and B to C, the same as
+    Callable[[A, B], C]. An argument can be given a name, and the types after it
+    can then mention it: Fn[k: Nat, Vec[A, k]] takes a number k and gives a Vec of
+    that length. The named form is for annotations."""
 
     def __class_getitem__(cls, item):
         return cls
@@ -109,6 +120,25 @@ def monus(a, b):
 def concat(a, b):
     """Joins two strings. a + b also works when one side is a string literal."""
     return a + b
+
+
+class Dec(Data):
+    """Dec[c] is what decide(c) returns: Yes(p) with p a proof of c == True, or
+    No(p) with p a proof of c == False."""
+
+
+class Yes(Dec):
+    __match_args__ = ("proof",)
+
+
+class No(Dec):
+    __match_args__ = ("proof",)
+
+
+def decide(c):
+    """Written as "match decide(c):" with "case Yes(p):" and "case No(p):". Inside
+    each case the type checker knows which value c has, and p is the proof."""
+    return Yes(Refl()) if c else No(Refl())
 
 
 class Empty(Data):

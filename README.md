@@ -130,11 +130,14 @@ The same file runs under `python3` 3.12 or newer with `lib/dependent.py` beside 
 ### What a checked file contains
 
 - **The first lines** are `from __future__ import annotations` and `from dependent import ...`. No other imports.
-- **Types:** `Nat` (0, 1, 2, ...), `bool`, `str`, `Type` (the type of types), `Callable[[A, B], C]`, `Eq[x, y]`, `Empty`, and the families the file declares.
+- **Types:** `Nat` (0, 1, 2, ...), `bool`, `str`, `Type` (the type of types), `Callable[[A, B], C]`, `Fn[...]`, `Eq[x, y]`, `Dec[c]`, `Empty`, and the families the file declares.
+- **Function types:** `Fn[A, B, C]` means the same as `Callable[[A, B], C]`: the last item is the result. An argument can be given a name, and the types after it can then use it. `Fn[k: Nat, Vec[A, k]]` takes a number `k` and gives a `Vec` of that length. The named form is for annotations only.
 - **A family of types** is `class Name[params](Data): ...`. Each constructor is a `def` marked `@constructor` with `...` as its body. Its parameters are the fields, and its return annotation says which member of the family it builds.
 - **Names in square brackets** (`def f[A, n: Nat]`) exist only for the checker. They can appear in annotations and nowhere else, because they are gone when the program runs. A name without a `: bound` is a type.
 - **A function body** is built from assignments, `if`, `match` and `return`. Every path must return. Every parameter and the result must be annotated.
 - **Numbers:** `+` and `*`. `if n == 0:` splits into the zero case and the other case, and in the other case `n - 1` is allowed. `monus(a, b)` is subtraction that stops at 0.
+- **Conditions:** inside `if c:` the checker has replaced `c` by `True` in the types it still has to check, and by `False` in the `else` part. So a proof about a function that tests `a < b` can test `a < b` itself and finish each branch separately.
+- **A proof of the condition:** `match decide(c):` with `case Yes(p):` and `case No(p):` does the same, and `p` is a proof of `c == True` or `c == False` to pass on to a function that asks for one.
 - **Proofs:** in an annotation, `a == b` is the type of proofs that `a` equals `b`. `refl()` proves a thing equals itself. `sym`, `trans`, `cong` and `subst` combine proofs, and `match p: case Refl():` uses one.
 - **Impossible cases:** `case _: return unreachable()` is accepted only when Agda can see that no value reaches it.
 - **Top level:** `name: T = value`, `print(...)`, and `assert`. An `assert` is checked by Agda before the program runs. A final `if __name__ == "__main__":` block may hold the same three.
@@ -152,7 +155,7 @@ The same file runs under `python3` 3.12 or newer with `lib/dependent.py` beside 
 - Lists, tuples, dicts and sets. Declare a `Data` family.
 - Loops, exceptions, attribute access, assignment to anything but a plain name, nested functions, default and keyword arguments.
 - Imports of other files. A checked program is one file.
-- `Callable` with more than 4 arguments.
+- Function types with more than 4 arguments.
 - A constructor field that holds a type. Agda reports that `Set₁` does not fit into `Set`.
 - String operations beyond literals, `==`, `concat(a, b)`, and `+` beside a literal.
 - `case ... if`, sequence and mapping patterns, and keyword patterns.
@@ -169,7 +172,10 @@ Type errors come from Agda, with positions mapped back to Python lines. Agda wri
 | `suc n` | `n + 1` |
 | `zero` | `0` |
 | `x ≡ y` | `x == y` in an annotation, or `Eq[x, y]` |
-| `Fun₂ A B C` | `Callable[[A, B], C]` |
+| `Fun₂ A (λ _ → B) (λ _ _ → C)` | `Callable[[A, B], C]` |
+| `Fun₂ A (λ x → B) (λ x y → C)` | `Fn[x: A, y: B, C]` |
+| `f x \| true` | `f(x)` in the branch where its `if` test was true |
+| `Dec₀ c` | `Dec[c]` |
 | `Set` | `Type` |
 | `⊥` | `Empty` |
 | `x₁` | a second variable that was also called `x` |

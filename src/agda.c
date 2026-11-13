@@ -15,6 +15,9 @@
      def f[A, n: Nat](xs: Vec[A, n]) -> Nat:  names in [] exist only for the checker
          match xs: ...                        becomes Agda clauses
          if n == 0: ... else: ... n - 1 ...   splits a Nat into zero and suc
+     if c: ... else: ...                  a `with` on c
+     match decide(c): case Yes(p): ...    a `with c in p`
+     Fn[k: Nat, P(k)]                     a function type whose result mentions the argument
      x: T = e, print(e), assert e             at the top level
 
    Each function body is turned into clauses by walking its statements with the
@@ -140,7 +143,8 @@ struct K { Node **l; int n, i; K *next; };
 
 static const struct { const char *py, *agda; int kind, arity; } prelude_names[] = {
     {"Type", "Set", SK_TYPE, 0}, {"Nat", "Nat", SK_TYPE, 0}, {"Empty", "\xE2\x8A\xA5", SK_TYPE, 0},
-    {"Eq", NULL, SK_TYPE, 2}, {"Callable", NULL, SK_TYPE, 2},
+    {"Eq", NULL, SK_TYPE, 2}, {"Callable", NULL, SK_TYPE, 2}, {"Fn", NULL, SK_TYPE, 1},
+    {"Dec", "Dec\xE2\x82\x80", SK_TYPE, 1}, {"Yes", "Yes", SK_CTOR, 1}, {"No", "No", SK_CTOR, 1}, {"decide", "decide", SK_FUNC, 1},
     {"Data", NULL, SK_SPECIAL, 0}, {"constructor", NULL, SK_SPECIAL, 0},
     {"Refl", "refl", SK_CTOR, 0}, {"refl", "refl", SK_FUNC, 0}, {"suc", "suc", SK_FUNC, 1},
     {"sym", "sym", SK_FUNC, 1}, {"trans", "trans", SK_FUNC, 2}, {"cong", "cong", SK_FUNC, 2},
@@ -158,7 +162,7 @@ static const char *const reserved[] = {
     "infixl", "infixr", "instance", "interleaved", "let", "macro", "module", "mutual", "no-eta-equality", "opaque",
     "open", "overlap", "pattern", "postulate", "primitive", "private", "public", "quote", "quoteTerm", "record",
     "renaming", "rewrite", "syntax", "tactic", "to", "unfolding", "unquote", "unquoteDecl", "unquoteDef", "using",
-    "variable", "where", "with", "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
+    "variable", "where", "with", "Yes", "No", "decide", "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
 static const char *const sub_digit[] = {"\xE2\x82\x80", "\xE2\x82\x81", "\xE2\x82\x82", "\xE2\x82\x83", "\xE2\x82\x84",
                                         "\xE2\x82\x85", "\xE2\x82\x86", "\xE2\x82\x87", "\xE2\x82\x88", "\xE2\x82\x89"};
@@ -543,8 +547,49 @@ static const char *call_expr(T *t, Node *n) {
     return af("(%s %s%s)", cn[argc], callee, join_args(t, n->l[0], argc));
 }
 
-static const char *subscript_expr(T *t, Node *n) {
+static bool ann_is_nat(T *t, Node *ann);
+
+/* The type of functions that take `args` and give `res`. An argument written
+   `name: type` can be mentioned by the types after it and by the result. In Agda
+   each later type is a function of the arguments before it:
+   Fn[k: Nat, P(k), Q] is Fun\xE2\x82\x82 Nat (\xCE\xBB k \xE2\x86\x92 P k) (\xCE\xBB k _ \xE2\x86\x92 Q). */
+static const char *fun_type(T *t, Node **args, int np, Node *res, int line) {
     static const char *const fn[] = {"Fun\xE2\x82\x80", "Fun\xE2\x82\x81", "Fun\xE2\x82\x82", "Fun\xE2\x82\x83", "Fun\xE2\x82\x84"};
+    if (np > 4) terr(t, line, "a function type can have at most 4 argument types");
+    if (res->kind == E_SLICE) terr(t, line, "the last item of Fn[...] is the result type, which has no name");
+    Var *saved = t->c.env;
+    const char *text = fn[np], *binders = "";
+    for (int i = 0; i < np; i++) {
+        Node *a = args[i], *ty = a;
+        Str *name = NULL;
+        if (a->kind == E_SLICE) {
+            if (!a->a || a->a->kind != E_NAME || !a->b || a->c)
+                terr(t, a->line, "an argument in Fn[...] is written as a type, or as name: type");
+            /* Python never evaluates an annotation here, so the name need not exist when
+               the program runs. Anywhere else Python would look the name up and fail. */
+            if (!t->c.in_type)
+                terr(t, a->line, "Fn[...] with a named argument can only be written in an annotation. "
+                                 "Here Python would evaluate it when the program runs, and '%s' would not be defined.",
+                     AS_STR(a->a->val)->s);
+            name = AS_STR(a->a->val);
+            ty = a->b;
+        }
+        const char *tt = tr_type(t, ty);
+        text = i ? af("%s (\xCE\xBB%s \xE2\x86\x92 %s)", text, binders, tt) : af("%s %s", text, tt);
+        const char *b = "_";
+        if (name) {
+            b = fresh(t, name->s);
+            bind(t, name, b, false, false, a->line);
+            t->c.env->erased = true;
+        }
+        binders = af("%s %s", binders, b);
+    }
+    const char *rt = tr_type(t, res);
+    t->c.env = saved;
+    return np ? af("(%s (\xCE\xBB%s \xE2\x86\x92 %s))", text, binders, rt) : af("(%s %s)", text, rt);
+}
+
+static const char *subscript_expr(T *t, Node *n) {
     if (n->a->kind != E_NAME) terr(t, n->line, "indexing is not available in a checked file");
     Ref r = lookup(t, AS_STR(n->a->val), n->line);
     Sym *s = r.s;
@@ -556,12 +601,11 @@ static const char *subscript_expr(T *t, Node *n) {
     if (sym_is(s, "Callable")) {
         if (argc != 2 || args[0]->kind != E_LIST)
             terr(t, n->line, "write Callable[[argument types], result type]");
-        int np = args[0]->n[0];
-        if (np > 4) terr(t, n->line, "Callable can have at most 4 argument types");
-        const char *text = fn[np];
-        for (int i = 0; i < np; i++) text = af("%s %s", text, tr_type(t, args[0]->l[0][i]));
-        return af("(%s %s)", text, tr_type(t, args[1]));
+        for (int i = 0; i < args[0]->n[0]; i++)
+            if (args[0]->l[0][i]->kind == E_SLICE) terr(t, n->line, "to name an argument, write Fn[name: type, ..., result type]");
+        return fun_type(t, args[0]->l[0], args[0]->n[0], args[1], n->line);
     }
+    if (sym_is(s, "Fn")) return fun_type(t, args, argc - 1, args[argc - 1], n->line);
     if (argc != s->arity || !s->arity)
         terr(t, n->line, "'%s' takes %d argument%s in square brackets but %d %s given", s->py->s, s->arity,
              s->arity == 1 ? "" : "s", argc, argc == 1 ? "was" : "were");
@@ -886,16 +930,10 @@ static Node *zero_test(Node *c, bool *then_is_zero) {
     return NULL;
 }
 
-static bool stmts_split(Node **l, int n);
 static bool stmt_splits(Node *s) {
-    bool z;
-    if (s->kind == S_MATCH) return true;
-    if (s->kind == S_IF) return zero_test(s->a, &z) || stmts_split(s->l[0], s->n[0]) || stmts_split(s->l[1], s->n[1]);
-    return false;
-}
-static bool stmts_split(Node **l, int n) {
-    for (int i = 0; i < n; i++) if (stmt_splits(l[i])) return true;
-    return false;
+    /* Every if is a split. A test that is not a zero test becomes a `with` column, so
+       inside each branch Agda has replaced the condition by true or false in the types. */
+    return s->kind == S_MATCH || s->kind == S_IF;
 }
 static bool has_split(K *k) {
     for (k = k_norm(k); k; k = k->next)
@@ -1001,17 +1039,6 @@ static void leaf(T *t, K *k, int line) {
             k = rest;
             continue;
         }
-        case S_IF: {
-            Var *saved = t->c.env;
-            o_put(t->cur, s->line, af("  if %s then (\n", E(t, s->a)));
-            leaf(t, k_push(s->l[0], s->n[0], rest), s->line);
-            t->c.env = saved;
-            o_put(t->cur, s->line, "  ) else (\n");
-            leaf(t, k_push(s->l[1], s->n[1], rest), s->line);
-            t->c.env = saved;
-            o_put(t->cur, s->line, "  )\n");
-            return;
-        }
         default: bad_stmt(t, s, false);
         }
     }
@@ -1079,6 +1106,15 @@ static bool is_unreachable(T *t, Node *c) {
     if (f->kind != E_NAME || !str_eqc(AS_STR(f->val), "unreachable")) return false;
     for (Var *v = t->c.env; v; v = v->next) if (v->py && str_eq(v->py, AS_STR(f->val))) return false;
     return !find_sym(t, AS_STR(f->val)) && sym_is(prelude_sym(t, AS_STR(f->val)), "unreachable");
+}
+
+/* The c of `decide(c)`, when decide is the one imported from dependent. */
+static Node *decide_arg(T *t, Node *e) {
+    if (e->kind != E_CALL || e->n[0] != 1 || e->a->kind != E_NAME || !str_eqc(AS_STR(e->a->val), "decide")) return NULL;
+    if (e->l[0][0]->kind == E_KEYWORD || e->l[0][0]->kind == E_STARRED) return NULL;
+    for (Var *v = t->c.env; v; v = v->next) if (v->py && str_eq(v->py, AS_STR(e->a->val))) return NULL;
+    if (find_sym(t, AS_STR(e->a->val)) || !sym_is(prelude_sym(t, AS_STR(e->a->val)), "decide")) return NULL;
+    return e->l[0][0];
 }
 
 /* When no case of a match fits, Python carries on with what follows the match, so
@@ -1170,6 +1206,42 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
             return;
         }
         case S_MATCH: {
+            Node *cond = decide_arg(t, s->a);
+            if (cond) {
+                /* match decide(c): case Yes(p) / case No(p). Agda's `with c in eq`: the
+                   condition becomes true or false in the types of each branch, and p is
+                   the proof that c equals that value. */
+                /* The proof gets one Agda name for both cases: the first name a case gives it. */
+                const char *eq_py = "proof";
+                for (int i = s->n[0] - 1; i >= 0; i--) {
+                    Node *p = s->l[0][i]->a;
+                    if (p->kind == P_CLASS && p->n[0] == 1 && p->l[0][0]->kind == P_CAPTURE && p->l[0][0]->val)
+                        eq_py = AS_STR(p->l[0][0]->val)->s;
+                }
+                const char *eq = fresh(t, eq_py);
+                o_put(t->cur, s->line, af("%s with %s in %s\n", lhs, E(t, cond), eq));
+                Var *saved = t->c.env;
+                bool seen[2] = {false, false};
+                for (int i = 0; i < s->n[0]; i++) {
+                    Node *c = s->l[0][i], *p = c->a;
+                    if (c->b) terr(t, c->line, "'case ... if' is not available in a checked file; use an if inside the case");
+                    bool shape = p->kind == P_CLASS && p->a->kind == E_NAME && !p->n[1] && p->n[0] == 1 && p->l[0][0]->kind == P_CAPTURE;
+                    Ref r = {0};
+                    if (shape) r = lookup(t, AS_STR(p->a->val), p->line);
+                    bool yes = shape && sym_is(r.s, "Yes");
+                    if (!yes && !(shape && sym_is(r.s, "No")))
+                        terr(t, c->line, "the cases under 'match decide(...)' are 'case Yes(p):' and 'case No(p):'");
+                    if (seen[yes]) terr(t, c->line, "this case is written twice");
+                    seen[yes] = true;
+                    t->c.env = saved;
+                    if (p->l[0][0]->val) bind(t, AS_STR(p->l[0][0]->val), eq, false, false, c->line);
+                    clauses(t, af("%s | %s", lhs, yes ? "true" : "false"), k_push(c->l[0], c->n[0], rest), c->line);
+                }
+                t->c.env = saved;
+                if (!seen[0] || !seen[1])
+                    terr(t, s->line, "'match decide(...)' needs both cases: 'case Yes(p):' and 'case No(p):'");
+                return;
+            }
             const char *target = E(t, s->a);
             bool nat = false;
             if (!var_by_term(t, target, &nat)) {

@@ -1,0 +1,4 @@
+  File "tests/rejected/fn_dependent_arg.py", line 20
+    print(use(lambda k, xs: zero_only(xs)))
+TypeCheckError: k != zero of type Nat
+when checking that the expression xs has type Vec Nat 0

@@ -1,0 +1,4 @@
+  File "tests/rejected/fn_wrong_step.py", line 12
+    return induction(lambda k: Eq[k + 0, k], refl(), lambda k, h: h, n)
+TypeCheckError: k₁ + 0 != suc (k₁ + 0) of type Nat
+when checking that the expression h has type suc k₁ + 0 ≡ suc k₁

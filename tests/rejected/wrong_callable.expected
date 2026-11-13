@@ -1,4 +1,4 @@
   File "tests/rejected/wrong_callable.py", line 17
     return f(1)
-TypeCheckError: (Fun₂ Nat Nat Nat) !=< (Fun₁ _A_14 _B_15)
+TypeCheckError: (Fun₂ Nat (λ _ → Nat) (λ _ _ → Nat)) !=< (Fun₁ _A_14 _B_15)
 when checking that the expression f has type Fun₁ _A_14 _B_15
