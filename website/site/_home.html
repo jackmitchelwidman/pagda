@@ -1,6 +1,6 @@
 <title>Pagda</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="description" content="Pagda is Python with dependent types. A checked file is type-checked by Agda before it runs.">
+<meta name="description" content="Pagda is a subset of Python with dependent types. A checked file is type-checked by Agda before it runs.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="site.css">
 <header class="top"><div class="wrap">
@@ -9,9 +9,9 @@
 </div></header>
 <main class="home"><section class="hero"><div class="wrap">
   <div class="hero-text">
-    <div class="eyebrow">Python with dependent types</div>
+    <div class="eyebrow">A subset of Python with dependent types</div>
     <h1>Python that is checked before it runs.</h1>
-    <p class="lede">Pagda runs Python. A file that asks for it is first type-checked by Agda, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero.</p>
+    <p class="lede">A Pagda file is a Python file. It is type-checked by Agda before it runs, and its types can state facts about values: this list has ten items, this index is inside the list, this divisor is never zero. The price is a smaller language: no exceptions, no objects that change, no inheritance.</p>
     <div class="actions">
       <a class="btn primary" href="start.html">Get started</a>
       <a class="btn" href="tour.html">Take the tour</a>
@@ -324,7 +324,7 @@ print(plus_zero(<span class="n">5</span>))
       <ul>
         <li>An ordinary Python file can call a checked file with anything.</li>
         <li>A def marked <code>@trusted</code> is believed without being read.</li>
-        <li>Floats, sets, exceptions and file access are outside checked files.</li>
+        <li>Checked files are a subset of Python. Exceptions, changing an object's fields, inheritance, floats, sets and file access are left out.</li>
         <li>Pagda is new. There are no numbered releases yet.</li>
       </ul>
       <p style="margin-top:1rem"><a href="faq.html">Read the limits in full</a></p>
@@ -344,7 +344,7 @@ print(plus_zero(<span class="n">5</span>))
 </div></section>
 </main>
 <footer class="foot"><div class="wrap">
-<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. A subset of Python with dependent types.</div>
 <nav aria-label="Footer"><a href="index.html" aria-current="page">Home</a><a href="start.html">Get started</a><a href="tour.html">Tour</a><a href="proofs.html">Proofs</a><a href="reference.html">Reference</a><a href="examples.html">Examples</a><a href="faq.html">FAQ</a></nav>
 </div></footer>
 <script src="site.js"></script>

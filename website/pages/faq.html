@@ -5,7 +5,7 @@
 <h2 id="about">About Pagda</h2>
 <dl class="faq">
   <div><dt>What is Pagda?</dt>
-  <dd><p>Pagda is Python with dependent types. The <code>pagda</code> program is a Python 3 interpreter written in C. A file that imports <code>dependent</code> is translated to Agda and checked by the <code>agda</code> program before it runs.</p></dd></div>
+  <dd><p>Pagda is a subset of Python with dependent types. A file that imports <code>dependent</code> is translated to Agda and checked by the <code>agda</code> program before it runs. Such a file can use the part of Python the checker understands. The <code>pagda</code> program is also a Python 3 interpreter, written in C, and runs ordinary Python files without checking them.</p></dd></div>
 
   <div><dt>What is a dependent type?</dt>
   <dd><p>A type that mentions a value. "A list of ints" is an ordinary type. "A list of exactly <code>n</code> ints" is a dependent type, and so is "a proof that <code>i</code> is less than <code>len(xs)</code>".</p></dd></div>

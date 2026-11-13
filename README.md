@@ -1,6 +1,6 @@
 # Pagda
 
-Pagda is Python with dependent types. A file that asks for it is type-checked by Agda before it runs, and the types can state facts about values: "this list has 10 items", "this index is inside the list", "`a + b` equals `b + a`". Files that do not ask for it run as ordinary Python.
+Pagda is a subset of Python with dependent types. A file that asks for it is type-checked by Agda before it runs, and the types can state facts about values: "this list has 10 items", "this index is inside the list", "`a + b` equals `b + a`". Such a file can use the part of Python the checker understands: no exceptions, no objects that change, no inheritance. Files that do not ask for checking run as ordinary Python.
 
 The `pagda` program is a Python 3 interpreter written in C. It reads Python source, compiles it to bytecode, and runs the bytecode on a stack machine. For a checked file it first translates the file to Agda and has the `agda` program check it.
 

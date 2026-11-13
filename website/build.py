@@ -207,7 +207,7 @@ def page(name, title, desc, body):
 </div></header>
 {main}
 <footer class="foot"><div class="wrap">
-<div><span class="mark" aria-hidden="true">⊢</span> Pagda. Python, checked by Agda before it runs.</div>
+<div><span class="mark" aria-hidden="true">⊢</span> Pagda. A subset of Python with dependent types.</div>
 <nav aria-label="Footer">{nav}</nav>
 </div></footer>
 <script src="site.js"></script>"""
