@@ -142,6 +142,7 @@ struct Var {
     bool fresh0;         /* bound to a new list or dict that nothing else referred to */
     bool dead;           /* the variable of a for loop that has ended */
     bool selfref;        /* a def inside a function, while its own body is being written */
+    const char *wide;    /* after `is not None`: the value as it was, still possibly None, for the loop state */
     int depth, tp, id;
     Ty *ty;
     const char *fact; bool fpol;
@@ -163,6 +164,7 @@ typedef struct {
     Leak *leaks;
     Ty *ret_ty;                           /* what the function being written returns */
     Str **ints; int nints;                /* locals that hold an int somewhere in the function */
+    Str **opt_names; Ty **opt_tys; int nopts;   /* locals that are None in one place and a value in another */
     const char **used; int nused, ucap;   /* Agda names taken in this definition */
     const char **lhs; int nlhs, lhscap;   /* the ones that are variables of the left-hand side */
     Str **locals; int nlocals, lcap;      /* names this function assigns somewhere */
@@ -232,7 +234,7 @@ static const char *const reserved[] = {
     "stop", "ret", "Out", "out", "early", "runLoop", "forEach", "forUpTo", "forRange", "WStep", "wnext", "wstop", "wret",
     "whileFuel", "whileDo", "Maybe", "just", "nothing", "ignore", "also", "shown", "showBool", "isNone", "EqMaybe",
     "findKey", "dfind", "chars", "unchars", "strIndex", "strSlice", "strTake", "strDrop", "strChars", "isPrefix", "startsWith", "endsWith",
-    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "lastOk", "lastOf", "ltDown", "setAtLen", "lenLt", "setAtKeeps",
+    "isInfix", "strIn", "ltChars", "strLt", "strRepeat", "strJoin", "splitGo", "strSplit", "strReplace", "isSpace", "dropSpaces", "strLstrip", "strRstrip", "strStrip", "andLeft", "andRight", "natMinus", "posNotBelowOne", "minusBelow", "lastOk", "lastOf", "ltDown", "ibound", "intIndex", "setAtLen", "lenLt", "setAtKeeps",
     "popped", "insertAt", "rangeInt", "Char", "ltNotZero", "posNotZero", "negNotZero", "sucs", "ltSucs", "monusUp", "intDown", "Int", "pos", "negsuc", "List", "fst", "snd", "tt", "eqInt", "EqInt", "EqPair", "EqUnit", "EqList",
     "EqNat", "EqBool", "EqString", "\xCE\xBB", "\xE2\x88\x80", NULL};
 
@@ -726,8 +728,22 @@ static bool ty_has_int(Ty *ty) {
     return false;
 }
 
+static void scan_target(T *t, Node *tg, Ty *ty);
+static Ty *iter_elem(T *t, Node *n);
+
+/* The type of the items of [e for x in xs ...]: the type of e with each x at the
+   type of its items. */
+static Ty *comp_elem(T *t, Node *n) {
+    Var *saved = t->c.env;
+    for (int i = 0; i < n->n[0]; i++) scan_target(t, n->l[0][i]->a, iter_elem(t, n->l[0][i]->b));
+    Ty *r = ty_of(t, n->a);
+    t->c.env = saved;
+    return r;
+}
+
 /* The type of the items that iterating over `n` gives. */
 static Ty *iter_elem(T *t, Node *n) {
+    if (n->kind == E_LISTCOMP || n->kind == E_GENEXP) return comp_elem(t, n);
     if (n->kind == E_CALL) {
         const char *b = plain_builtin(t, n->a);
         int argc = n->n[0];
@@ -835,6 +851,7 @@ static Ty *ty_of(T *t, Node *n) {
         Ty *a = ty_of(t, n->b), *b = ty_of(t, n->c);
         if (tk(a) == TK_NONE && b && b->k != TK_NONE) return b->k == TK_OPT ? b : mk_ty(TK_OPT, b, NULL);
         if (tk(b) == TK_NONE && a && a->k != TK_NONE) return a->k == TK_OPT ? a : mk_ty(TK_OPT, a, NULL);
+        if (ty_has_int(b)) return b;
         return a ? a : b;
     }
     case E_TUPLE: {
@@ -851,7 +868,7 @@ static Ty *ty_of(T *t, Node *n) {
         }
         return mk_ty(TK_LIST, elem, NULL);
     }
-    case E_LISTCOMP: return mk_ty(TK_LIST, NULL, NULL);
+    case E_LISTCOMP: case E_GENEXP: return mk_ty(TK_LIST, comp_elem(t, n), NULL);
     case E_DICT:
         return mk_ty(TK_DICT, n->n[0] && n->l[0][0] ? ty_of(t, n->l[0][0]) : NULL, n->n[0] ? ty_of(t, n->l[1][0]) : NULL);
     case E_SUBSCR: {
@@ -1058,6 +1075,15 @@ static const char *div_proof(T *t, const char *b, bool is_int, int line) {
 
 static const char *maybe_type(T *t, Node *inner, int line);
 
+/* The proof for `a - b` on Nats that b is not larger than a: a test in scope
+   (`if b <= a:`, or `if a > 0:` for a - 1), or refl when Agda can work it out. */
+static const char *minus_proof(T *t, Node *n, const char *a, const char *b) {
+    const char *p = fact_proof(t, af("(%s < %s)", a, b), false);
+    if (p) return p;
+    if (!strcmp(b, "1") && (p = fact_proof(t, af("(0 < %s)", a), true))) return af("(posNotBelowOne {%s} %s)", a, p);
+    return auto_refl(t, n->line);
+}
+
 __attribute__((noreturn)) static void may_be_none(T *t, int line) {
     terr(t, line, "this value may be None, and a value that is never None is needed here. "
                   "Test it first with 'if ... is None:' or 'if ... is not None:'.");
@@ -1075,6 +1101,13 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
         return maybe_type(t, is_none(n->a) ? n->b : n->a, n->line);
     if (op == OP_TRUEDIV)
         terr(t, n->line, "'/' gives a float, and floats are not available in a checked file. Use // for whole-number division.");
+    if (op == OP_MUL && (lk == TK_STR || rk == TK_STR) && lk != rk) {
+        /* "ab" * 3. A negative count gives the empty string, as in Python. */
+        Node *sn = lk == TK_STR ? n->a : n->b, *cn = lk == TK_STR ? n->b : n->a;
+        const char *text = E(t, sn);
+        const char *count = tk(ty_of(t, cn)) == TK_INT ? af("(toNat %s)", E(t, cn)) : E(t, cn);
+        return af("(strRepeat %s %s)", text, count);
+    }
     if (k == TK_INT) {
         const char *a = EW(t, n->a, &ty_int);
         if (op == OP_POW) {
@@ -1090,11 +1123,6 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
         case OP_MOD: return af("(modInt %s %s %s)", a, b, div_proof(t, b, true, n->line));
         default: terr(t, n->line, "this operator is not available in a checked file; int has + - * // %% and **");
         }
-    }
-    if (k == TK_STR && op == OP_MUL && (lk == TK_NAT || rk == TK_NAT)) {
-        const char *a = E(t, n->a);
-        const char *b = E(t, n->b);
-        return lk == TK_STR ? af("(strRepeat %s %s)", a, b) : af("(strRepeat %s %s)", b, a);
     }
     if (k == TK_STR) {
         if (op != OP_ADD) terr(t, n->line, "this operator is not available on strings in a checked file; strings have + and * by a Nat");
@@ -1113,8 +1141,10 @@ static const char *binop_expr(T *t, Node *n, Ty *want) {
             Ref r = lookup(t, AS_STR(n->a->val), n->line);
             if (r.v && r.v->pred) return r.v->pred;
         }
-        terr(t, n->line, "subtraction on Nat is only allowed as 'n - 1' where 'if n == 0' has ruled out zero. "
-                         "Use monus(a, b) for subtraction that stops at 0, or work with int.");
+        /* a - b on Nats is fine where b is known not to be larger than a */
+        const char *a = E(t, n->a);
+        const char *b = E(t, n->b);
+        return af("(natMinus %s %s %s)", a, b, minus_proof(t, n, a, b));
     }
     const char *a = E(t, n->a);
     if (op == OP_ADD && is_int_const(n->b) && int_sign(n->b->val) > 0 && int_cmp(n->b->val, int_new(32)) <= 0) {
@@ -1545,6 +1575,16 @@ static const char *bound_proof(T *t, const char *ix, const char *n, int line) {
     return auto_refl(t, line);
 }
 
+/* An index that is an int: the position as a Nat, and the proof that it is one of
+   the list's positions. Python would count a negative index from the end; here it
+   has to be 0 or more, which a test such as `0 <= i < len(xs)` shows. */
+static const char *int_index(T *t, const char *ix, const char *n, int line, const char **pos) {
+    const char *p1 = fact_proof(t, af("(%s <\xE1\xB5\xA2 (pos 0))", ix), false);
+    const char *p2 = fact_proof(t, af("(%s <\xE1\xB5\xA2 (pos %s))", ix, n), true);
+    *pos = af("(toNat %s)", ix);
+    return af("(intIndex %s %s %s %s)", ix, n, p1 ? p1 : auto_refl(t, line), p2 ? p2 : auto_refl(t, line));
+}
+
 /* One end of a slice. xs[:-1] and xs[-2:] count from the end: -k is len - k, and
    0 when the list is shorter than k, which is what Python does. */
 static const char *slice_bound(T *t, Node *b, const char *base, bool is_str) {
@@ -1553,8 +1593,7 @@ static const char *slice_bound(T *t, Node *b, const char *base, bool is_str) {
         return af("(monus (%s %s) %lld)", is_str ? "strLen" : "len", base, (long long)v);
     if (is_int_const(b) && int_fits(b->val, &v) && v < 0 && v > INT64_MIN)
         return af("(monus (%s %s) %lld)", is_str ? "strLen" : "len", base, (long long)-v);
-    if (tk(ty_of(t, b)) == TK_INT)
-        terr(t, b->line, "the ends of a slice are Nats, or a negative number written out, in a checked file");
+    if (tk(ty_of(t, b)) == TK_INT) return af("(ibound (%s %s) %s)", is_str ? "strLen" : "len", base, E(t, b));
     return E(t, b);
 }
 
@@ -1582,8 +1621,18 @@ static const char *index_expr(T *t, Node *n) {
             const char *a = slice_bound(t, i->a, base, false);
             return af("(slice %s %s %s)", a, slice_bound(t, i->b, base, false), base);
         }
-        if (tk(ty_of(t, i)) == TK_INT) terr(t, n->line, "a list index is a Nat in a checked file; turn an int into a Nat with to_nat(...)");
         const char *ix = E(t, i);
+        if (tk(ty_of(t, i)) == TK_INT) {
+            const char *at, *p = int_index(t, ix, af("(len %s)", base), n->line, &at);
+            return af("(index %s %s %s)", base, at, p);
+        }
+        if (i->kind == E_BINOP && i->op == OP_SUB && strncmp(ix, "(natMinus ", 10) == 0) {
+            /* xs[i - 1]: below the length because i is */
+            const char *a = E(t, i->a);
+            const char *b = E(t, i->b);
+            const char *q = fact_proof(t, af("(%s < (len %s))", a, base), true);
+            if (q) return af("(index %s %s (minusBelow %s %s (len %s) %s %s))", base, ix, a, b, base, minus_proof(t, i, a, b), q);
+        }
         return af("(index %s %s %s)", base, ix, bound_proof(t, ix, af("(len %s)", base), n->line));
     }
     case TK_TUPLE: {
@@ -1610,8 +1659,11 @@ static const char *index_expr(T *t, Node *n) {
             const char *a = slice_bound(t, i->a, base, true);
             return af("(strSlice %s %s %s)", a, slice_bound(t, i->b, base, true), base);
         }
-        if (tk(ty_of(t, i)) == TK_INT) terr(t, n->line, "an index is a Nat in a checked file; turn an int into a Nat with to_nat(...)");
         const char *ix = E(t, i);
+        if (tk(ty_of(t, i)) == TK_INT) {
+            const char *at, *p = int_index(t, ix, af("(strLen %s)", base), n->line, &at);
+            return af("(strIndex %s %s %s)", base, at, p);
+        }
         return af("(strIndex %s %s %s)", base, ix, bound_proof(t, ix, af("(strLen %s)", base), n->line));
     }
     default:
@@ -1788,8 +1840,24 @@ static const char *EW(T *t, Node *n, Ty *want) {
         return all;
     }
     case E_IFEXP: {
-        const char *c = C(t, n->a), *a = EW(t, n->b, want);
-        return af("(if %s then %s else %s)", c, a, EW(t, n->c, want));
+        if (!want) { Ty *own = ty_of(t, n); if (ty_has_int(own)) want = own; }
+        /* Python works out only the branch it takes, so each branch may rely on the
+           test: xs[0] if xs else 0. The proof is handed in only when a branch uses it. */
+        bool pol;
+        const char *core = cond_core(t, n->a, &pol);
+        const char *h = fresh(t, "h");
+        int fid = new_fact_id(t);
+        Var *saved = t->c.env;
+        add_fact(t, core, pol, h);
+        t->c.env->fid = fid;
+        const char *a = EW(t, n->b, want);
+        t->c.env = saved;
+        add_fact(t, core, !pol, h);
+        t->c.env->fid = fid;
+        const char *b = EW(t, n->c, want);
+        t->c.env = saved;
+        if (!t->fact_used[fid]) return af("(if %s then %s else %s)", pol ? core : af("(not %s)", core), a, b);
+        return af("(ifd %s (\xCE\xBB %s \xE2\x86\x92 %s) (\xCE\xBB %s \xE2\x86\x92 %s))", core, h, pol ? a : b, h, pol ? b : a);
     }
     case E_LAMBDA: return lambda_expr(t, n, want);
     case E_TUPLE: {
@@ -2293,6 +2361,23 @@ static Node *zero_test(Node *c, bool *then_is_zero) {
    `or`. Each test then gets its own fact. */
 static Node *split_boolop(Node *s) {
     Node *c = s->a;
+    if (c->kind == E_COMPARE && c->n[0] > 1) {
+        /* 0 <= i < n is 0 <= i and i < n */
+        Node *both = synth(E_BOOLOP, c->line);
+        both->l[0] = arena_alloc((size_t)c->n[0] * sizeof(Node *));
+        both->n[0] = c->n[0];
+        Node *left = c->a;
+        for (int i = 0; i < c->n[0]; i++) {
+            Node *one = synth(E_COMPARE, c->line);
+            one->a = left; one->l[0] = c->l[0] + i; one->n[0] = 1; one->ops = c->ops + i;
+            both->l[0][i] = one;
+            left = c->l[0][i];
+        }
+        Node *copy = synth(S_IF, s->line);
+        *copy = *s;
+        copy->a = both;
+        s = copy; c = both;
+    }
     if (c->kind != E_BOOLOP) return s;
     Node *restc = c->l[0][1];
     if (c->n[0] > 2) {
@@ -2475,11 +2560,30 @@ typedef struct { Str *name; Node *tuple, *value, *ann; } Asg;
    so that a name set late in a loop is known at the top of it. */
 static void scan_target(T *t, Node *tg, Ty *ty) {
     if (tg->kind == E_NAME) {
-        bind(t, AS_STR(tg->val), "_", false, false, 0);
-        t->c.env->ty = ty;
+        Var *v = arena_alloc(sizeof(Var));   /* a binding only ty_of looks at */
+        v->py = AS_STR(tg->val); v->term = "_"; v->tp = -1; v->ty = ty;
+        v->next = t->c.env;
+        t->c.env = v;
     } else if (tg->kind == E_TUPLE)
         for (int j = 0; j < tg->n[0]; j++)
             scan_target(t, tg->l[0][j], tk(ty) == TK_TUPLE && ty->n == tg->n[0] ? ty->items[j] : NULL);
+}
+
+/* `best = None` and later `best = x`: the name is an Optional of x's type. The
+   walk notes which names are given None and what else they are given. */
+static struct { Str *name; bool none; Ty *ty; } scan_opt[64];
+static int nscan_opt;
+
+static void scan_note(Str *name, bool none, Ty *ty) {
+    int at = -1;
+    for (int i = 0; i < nscan_opt; i++) if (str_eq(scan_opt[i].name, name)) at = i;
+    if (at < 0) {
+        if (nscan_opt == 64) return;
+        at = nscan_opt++;
+        scan_opt[at].name = name; scan_opt[at].none = false; scan_opt[at].ty = NULL;
+    }
+    if (none) scan_opt[at].none = true;
+    else if (ty && ty->k != TK_NONE && ty->k != TK_OPT && (!scan_opt[at].ty || ty->k == TK_INT)) scan_opt[at].ty = ty;
 }
 
 static void scan_ints(T *t, Names *ints, Node **l, int n) {
@@ -2491,6 +2595,7 @@ static void scan_ints(T *t, Names *ints, Node **l, int n) {
             if (!tg || tg->kind != E_NAME) break;
             Node *value = s->kind == S_ASSIGN ? s->a : s->b;
             if (!value) break;
+            if (s->kind == S_ASSIGN) scan_note(AS_STR(tg->val), is_none(value), is_none(value) ? NULL : ty_of(t, value));
             Ty *ty;
             if (s->kind == S_ANNASSIGN) ty = ty_ann(t, s->c, NULL, NULL);
             else {
@@ -2516,10 +2621,35 @@ static void scan_ints(T *t, Names *ints, Node **l, int n) {
     }
 }
 
+/* Walks a function body before it is translated and notes which locals are ints
+   and which are Optional. */
+static void scan_body(T *t, Node **l, int n) {
+    Names ints = {0};
+    Var *env = t->c.env;
+    nscan_opt = 0;
+    scan_ints(t, &ints, l, n);
+    scan_ints(t, &ints, l, n);
+    t->c.env = env;
+    t->c.ints = ints.v; t->c.nints = ints.n;
+    t->c.opt_names = arena_alloc((size_t)(nscan_opt + 1) * sizeof(Str *));
+    t->c.opt_tys = arena_alloc((size_t)(nscan_opt + 1) * sizeof(Ty *));
+    t->c.nopts = 0;
+    for (int i = 0; i < nscan_opt; i++) {
+        if (!scan_opt[i].none || !scan_opt[i].ty) continue;
+        Ty *inner = scan_opt[i].ty;
+        if (inner->k == TK_NAT && names_has(&ints, scan_opt[i].name)) inner = &ty_int;
+        t->c.opt_names[t->c.nopts] = scan_opt[i].name;
+        t->c.opt_tys[t->c.nopts++] = mk_ty(TK_OPT, inner, NULL);
+    }
+}
+
 /* The type a plain assignment gives its name, and the type to translate the value at. */
 static Ty *assign_ty(T *t, Asg *a, Ty **want) {
     *want = a->ann ? ty_ann(t, a->ann, NULL, NULL) : NULL;
     Ty *vt = *want ? *want : ty_of(t, a->value);
+    if (!a->ann && a->name)
+        for (int i = 0; i < t->c.nopts; i++)
+            if (str_eq(t->c.opt_names[i], a->name) && tk(vt) != TK_OPT) { *want = t->c.opt_tys[i]; return *want; }
     if (!a->ann && a->name && tk(vt) == TK_NAT)
         for (int i = 0; i < t->c.nints; i++)
             if (str_eq(t->c.ints[i], a->name)) { *want = &ty_int; return &ty_int; }
@@ -2638,9 +2768,10 @@ static const char *mutation(T *t, Node *s, Var **var) {
         const char *key = EW(t, tg->b, v->ty->a);
         return af("(dset %s %s %s)", x, key, EW(t, value, v->ty->b));
     }
-    if (tk(ty_of(t, tg->b)) == TK_INT) terr(t, s->line, "a list index is a Nat in a checked file; turn an int into a Nat with to_nat(...)");
     const char *ix = E(t, tg->b);
-    const char *p = bound_proof(t, ix, af("(len %s)", x), s->line);
+    const char *p;
+    if (tk(ty_of(t, tg->b)) == TK_INT) p = int_index(t, ix, af("(len %s)", x), s->line, &ix);
+    else p = bound_proof(t, ix, af("(len %s)", x), s->line);
     const char *val = EW(t, value, v->ty->a);
     t->set_ix = ix; t->set_val = val; t->set_p = p;
     return af("(setAt %s %s %s %s)", x, ix, val, p);
@@ -2901,7 +3032,7 @@ static const char *state_text(T *t, Tail *tl, int line) {
             terr(t, line, "'%s' is assigned outside this loop and is also the variable of a for loop inside it. "
                           "Give one of them another name.", tl->carried[i]->s);
         if (!is_fresh(t, v)) tl->stale[i] = true;
-        const char *one = v->term;
+        const char *one = v->wide ? v->wide : v->term;
         if (tl->tracked && tl->tracked[i]) {
             if (!v->lenp) terr(t, line, "the checker lost track of the length of '%s' in this loop", v->py->s);
             one = af("(%s , %s)", v->term, v->lenp);
@@ -3037,7 +3168,7 @@ static int expand_assign(T *t, Node *s, Node ***out) {
     return 2 * c;
 }
 
-static void scan_ints(T *t, Names *ints, Node **l, int n);
+static void scan_body(T *t, Node **l, int n);
 
 /* A def inside a function: a function value held in a local name. It can use the
    names around it, and it cannot call itself. Returns the Agda text; *ty is its type. */
@@ -3069,12 +3200,7 @@ static const char *local_def(T *t, Node *def, Ty **ty) {
         binders = af("%s (%s : %s)", binders, a, tt);
     }
     fty->a = ty_ann(t, def->b, NULL, NULL);
-    Names ints = {0};
-    Var *env = t->c.env;
-    scan_ints(t, &ints, def->l[0], def->n[0]);
-    scan_ints(t, &ints, def->l[0], def->n[0]);
-    t->c.env = env;
-    t->c.ints = ints.v; t->c.nints = ints.n;
+    scan_body(t, def->l[0], def->n[0]);
     t->c.ret_ty = fty->a;
     Tail tl = {0};
     tl.ret = fty->a;
@@ -3257,7 +3383,7 @@ static void sx(T *t, K *k, Tail *tl, int line) {
                 sx(t, k_push(s->l[then_none ? 0 : 1], s->n[then_none ? 0 : 1], rest), tl, s->line);
                 reset(t, m);
                 o_put(t->cur, s->line, af("  ; (just %s) \xE2\x86\x92\n", p));
-                bindv(t, name, p, false, inner, s->line);
+                bindv(t, name, p, false, inner, s->line)->wide = af("(just %s)", p);
                 sx(t, k_push(s->l[then_none ? 1 : 0], s->n[then_none ? 1 : 0], rest), tl, s->line);
                 reset(t, m);
                 o_put(t->cur, s->line, "  })\n");
@@ -3380,7 +3506,7 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
     bool is_while = s->kind == S_WHILE;
     if (s->n[1]) terr(t, s->line, "'else' on a loop is not available in a checked file");
     Node **body = s->l[0], *dec = NULL, *auto_lo = NULL, *auto_hi = NULL;
-    int nb = s->n[0], auto_kind = 0;
+    int nb = s->n[0], auto_kind = 0, auto_conj = 0;
     int64_t auto_step = 0;
     if (is_while) {
         int last = nb - 1;
@@ -3392,21 +3518,29 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
         } else {
             /* Two shapes need no decreases: counting a Nat up to a limit, and counting an
                int down to 0. The counter is stepped once, by the last statement. */
-            Node *c = s->a, *lo = NULL, *hi = NULL;
-            if (c->kind == E_COMPARE && c->n[0] == 1 && c->ops[0] == CMP_LT) { lo = c->a; hi = c->l[0][0]; }
-            if (c->kind == E_COMPARE && c->n[0] == 1 && c->ops[0] == CMP_GT) { lo = c->l[0][0]; hi = c->a; }
+            Node *lo = NULL, *hi = NULL;
             Names before = {0};
             if (last >= 0) assigned(t, &before, body, last, true);
             int64_t step = 0;
-            if (last >= 0 && lo && lo->kind == E_NAME && tk(ty_of(t, lo)) == TK_NAT && tk(ty_of(t, hi)) != TK_INT &&
-                steps_by(body[last], AS_STR(lo->val), false, &step) && !names_has(&before, AS_STR(lo->val)) &&
-                fixed_limit(t, hi, &before) && find_var(t, AS_STR(lo->val)))
-                auto_kind = 1;
-            else if (last >= 0 && hi && hi->kind == E_NAME && tk(ty_of(t, hi)) == TK_INT && is_int_const(lo) && int_sign(lo->val) == 0 &&
-                     steps_by(body[last], AS_STR(hi->val), true, &step) && !names_has(&before, AS_STR(hi->val)) &&
-                     find_var(t, AS_STR(hi->val)))
-                auto_kind = 2;
-            else
+            /* the counting test may be one of several joined by `and` */
+            bool conj = s->a->kind == E_BOOLOP && s->a->op == 0;
+            int nc = conj ? s->a->n[0] : 1;
+            for (int ci = 0; ci < nc && !auto_kind; ci++) {
+                Node *c = conj ? s->a->l[0][ci] : s->a;
+                lo = hi = NULL;
+                if (c->kind == E_COMPARE && c->n[0] == 1 && c->ops[0] == CMP_LT) { lo = c->a; hi = c->l[0][0]; }
+                if (c->kind == E_COMPARE && c->n[0] == 1 && c->ops[0] == CMP_GT) { lo = c->l[0][0]; hi = c->a; }
+                if (last >= 0 && lo && lo->kind == E_NAME && tk(ty_of(t, lo)) == TK_NAT && tk(ty_of(t, hi)) != TK_INT &&
+                    steps_by(body[last], AS_STR(lo->val), false, &step) && !names_has(&before, AS_STR(lo->val)) &&
+                    fixed_limit(t, hi, &before) && find_var(t, AS_STR(lo->val)))
+                    auto_kind = 1;
+                else if (last >= 0 && hi && hi->kind == E_NAME && tk(ty_of(t, hi)) == TK_INT && is_int_const(lo) && int_sign(lo->val) == 0 &&
+                         steps_by(body[last], AS_STR(hi->val), true, &step) && !names_has(&before, AS_STR(hi->val)) &&
+                         find_var(t, AS_STR(hi->val)))
+                    auto_kind = 2;
+                auto_conj = ci;
+            }
+            if (!auto_kind)
                 terr(t, s->line, "the checker has to see that a while loop ends. It sees it by itself for 'while i < n:' "
                                  "where the last statement is 'i += 1' (i a Nat, n not changed in the loop), and for "
                                  "'while k > 0:' where the last statement is 'k -= 1' (k an int). Any other while loop "
@@ -3454,7 +3588,7 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
     }
     /* Agda cannot guess that a pair holds a list with a proof about it, so the type
        of the state is spelled out, with _ for the parts it can work out. */
-    if (any_tracked) init = af("(the %s %s)", state_ty, init);
+    if (any_tracked || L->n >= 2) init = af("(the %s %s)", state_ty, init);
     if (!init) init = "tt";
     Ty *elem = NULL;
     if (!is_while) {
@@ -3497,7 +3631,20 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
         const char *core = cond_core(t, s->a, &pol);
         if (dec && tk(ty_of(t, dec->a->l[0][0])) == TK_INT)
             terr(t, dec->line, "the measure of a while loop is a Nat; turn an int into a Nat with to_nat(...)");
-        const char *h = fresh(t, "h");
+        const char *h = fresh(t, "h"), *hc = h;
+        /* `while a and b:` gives the body a proof of each part */
+        if (s->a->kind == E_BOOLOP && s->a->op == 0) {
+            int m = s->a->n[0];
+            for (int j = 0; j < m; j++) {
+                const char *pj = h;
+                for (int q = 0; q < m - 1 - j; q++) pj = af("(andLeft %s)", pj);
+                if (j > 0) pj = af("(andRight %s)", pj);
+                bool pj_pol;
+                const char *cj = cond_core(t, s->a->l[0][j], &pj_pol);
+                add_fact(t, cj, pj_pol, pj_pol ? pj : af("(unNot %s)", pj));
+                if (!dec && j == auto_conj) hc = pj;
+            }
+        }
         const char *measure;
         if (dec) measure = E(t, dec->a->l[0][0]);
         else if (auto_kind == 1) {
@@ -3506,12 +3653,12 @@ static void loop_emit(T *t, Node *s, Tail *outer, Loop *L) {
             measure = af("(monus %s %s)", n0, i0);
             tl.auto_var = AS_STR(auto_lo->val);
             tl.auto_pre = af("(monusUp %s %s ", n0, i0);
-            tl.auto_post = af(" %s (ltSucs %lld %s))", h, (long long)(auto_step - 1), i0);
+            tl.auto_post = af(" %s (ltSucs %lld %s))", hc, (long long)(auto_step - 1), i0);
         } else {
             /* toNat k shrinks: intDown k c (0 < k) */
             const char *k0 = E(t, auto_hi);
             measure = af("(toNat %s)", k0);
-            tl.auto_pre = af("(intDown %s %lld %s)", k0, (long long)(auto_step - 1), h);
+            tl.auto_pre = af("(intDown %s %lld %s)", k0, (long long)(auto_step - 1), hc);
             tl.auto_post = "";
         }
         o_put(t->cur, s->line, af("  (whileDo (\xCE\xBB { %s \xE2\x86\x92 %s%s%s }) (\xCE\xBB { %s \xE2\x86\x92 %s }) %s (\xCE\xBB { %s %s \xE2\x86\x92\n",
@@ -3727,7 +3874,7 @@ static void clauses(T *t, const char *lhs, K *k, int line) {
                     bool none_now = (pass == 0) == then_none;
                     t->c.leaks = m.leaks;
                     t->c.env = none_now ? env_none : env_just;
-                    if (!none_now) bindv(t, name, p, true, inner, s->line);
+                    if (!none_now) bindv(t, name, p, true, inner, s->line)->wide = just;
                     clauses(t, none_now ? lhs_none : lhs_just, pass == 0 ? kt : ke, s->line);
                 }
                 reset(t, m);
@@ -3921,14 +4068,7 @@ static void emit_func_body(T *t, Sym *s) {
     }
     t->c.ret_ty = ty_ann(t, def->b, NULL, NULL);
     collect_locals(t, def->l[0], def->n[0]);
-    {
-        Names ints = {0};
-        Var *env = t->c.env;
-        scan_ints(t, &ints, def->l[0], def->n[0]);
-        scan_ints(t, &ints, def->l[0], def->n[0]);
-        t->c.env = env;
-        t->c.ints = ints.v; t->c.nints = ints.n;
-    }
+    scan_body(t, def->l[0], def->n[0]);
     clauses(t, lhs, k_push(def->l[0], def->n[0], NULL), def->line);
     /* Bind the [] names the body mentioned, so its annotations can refer to them. */
     const char *binders = "";
@@ -4644,8 +4784,8 @@ static T *check_module(Node *m, const char *filename, bool main) {
     for (int i = 0; i < t->nauto; i++)
         if (t->auto_lines[i] == first && strstr(report, "when checking that the expression refl has type")) {
             report = af("%s\nThe checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), "
-                        "d[k] needs k in d, // and %% need a divisor that is not 0, and an assert inside a function needs "
-                        "its condition. Put the code under an 'if' that tests it.", report);
+                        "d[k] needs k in d, // and %% need a divisor that is not 0, a - b on Nats needs b <= a, and an "
+                        "assert inside a function needs its condition. Put the code under an 'if' that tests it.", report);
             break;
         }
     check_fail(filename, first, report);

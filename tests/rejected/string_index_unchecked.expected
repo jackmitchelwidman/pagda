@@ -4,4 +4,4 @@ TypeCheckError: (0 < len (Agda.Builtin.String.primStringToList s)) != true of ty
 Bool
 when checking that the expression refl has type
 (0 < strLen s) ≡ true
-The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.
+The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, a - b on Nats needs b <= a, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.

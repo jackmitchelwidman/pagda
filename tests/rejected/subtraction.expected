@@ -1,3 +1,5 @@
   File "tests/rejected/subtraction.py", line 17
     return n - 1
-TypeCheckError: subtraction on Nat is only allowed as 'n - 1' where 'if n == 0' has ruled out zero. Use monus(a, b) for subtraction that stops at 0, or work with int.
+TypeCheckError: (n < 1) != false of type Bool
+when checking that the expression refl has type (n < 1) ≡ false
+The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, a - b on Nats needs b <= a, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.

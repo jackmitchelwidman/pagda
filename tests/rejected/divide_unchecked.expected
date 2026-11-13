@@ -3,4 +3,4 @@
 TypeCheckError: (b == pos 0) != false of type Bool
 when checking that the expression refl has type
 (b == pos 0) ≡ false
-The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.
+The checker cannot see that a condition this line relies on holds. xs[i] needs i < len(xs), d[k] needs k in d, // and % need a divisor that is not 0, a - b on Nats needs b <= a, and an assert inside a function needs its condition. Put the code under an 'if' that tests it.

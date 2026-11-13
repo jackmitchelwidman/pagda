@@ -614,3 +614,32 @@ strRstrip : String → String
 strRstrip s = unchars (reverse (dropSpaces (reverse (chars s))))
 strStrip : String → String
 strStrip s = strRstrip (strLstrip s)
+
+-- An int used as the end of a slice: -k counts from the end, as Python does.
+ibound : Nat → Int → Nat
+ibound n (pos k) = k
+ibound n (negsuc k) = monus n (suc k)
+-- An int used as an index: it has to be 0 or more, and below the length.
+intIndex : (i : Int) (n : Nat) → (i <ᵢ pos 0) ≡ false → (i <ᵢ pos n) ≡ true → (toNat i < n) ≡ true
+intIndex (pos k) n p q = q
+intIndex (negsuc k) n () q
+
+-- a - b on Nats, where b is known not to be larger than a. (Python would give a
+-- negative number otherwise, and a Nat cannot hold one.)
+natMinus : (a b : Nat) → (a < b) ≡ false → Nat
+natMinus a b p = monus a b
+posNotBelowOne : {a : Nat} → (0 < a) ≡ true → (a < 1) ≡ false
+posNotBelowOne {suc a} p = refl
+monus-keeps : (a b n : Nat) → (a < n) ≡ true → (monus a b < n) ≡ true
+monus-keeps a zero n q = q
+monus-keeps zero (suc b) n q = q
+monus-keeps (suc a) (suc b) zero ()
+monus-keeps (suc a) (suc b) (suc n) q = lt-weaken (monus a b) n (monus-keeps a b n q)
+minusBelow : (a b n : Nat) (p : (a < b) ≡ false) → (a < n) ≡ true → (natMinus a b p < n) ≡ true
+minusBelow a b n p q = monus-keeps a b n q
+
+-- each part of `a and b` holds when the whole does
+andLeft : {a b : Bool} → (a ∧ b) ≡ true → a ≡ true
+andLeft {true} p = refl
+andRight : {a b : Bool} → (a ∧ b) ≡ true → b ≡ true
+andRight {true} p = p
